@@ -21,7 +21,7 @@ import sources
 
 API = "https://api.service.cqc.org.uk/public/v1"
 TARGET_RATINGS = {"Inadequate", "Requires improvement"}
-REPORT_MAX_AGE_DAYS = int(os.getenv("RADAR_REPORT_MAX_AGE_DAYS", "10"))
+REPORT_MAX_AGE_DAYS = int(os.getenv("RADAR_REPORT_MAX_AGE_DAYS", "45"))
 MAX_PROSPECTS = int(os.getenv("RADAR_MAX_PER_DAY", "10"))
 PRIORITY_REGIONS = [r.strip().lower() for r in os.getenv("RADAR_PRIORITY_REGIONS", "South East,London").split(",") if r.strip()]
 ONLY_PRIORITY = os.getenv("RADAR_ONLY_PRIORITY_REGIONS") == "1"
@@ -178,7 +178,7 @@ def draft_email(p: dict) -> tuple[str, str]:
     user = (
         f"Service: {p['location_name']} ({p['service_type']}), {p['town']}\n"
         f"Registered manager: {p['registered_manager'] or 'not listed'}\n"
-        f"Overall rating: {p['rating']}, report published {p['report_date']}\n"
+        f"Overall rating: {p['rating']}, report dated {p['report_date']}\n"
         f"Key questions rated below Good: {', '.join(p['weak_key_questions']) or 'not listed'}\n"
         f"Free article to link: {title} {url}\n"
         f"Free call link: https://tfft.io/CRIkyvF"
@@ -193,23 +193,33 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised")
-    ids = changed_location_ids(days=REPORT_MAX_AGE_DAYS if first else 2)
+    first = not store.has("radar:initialised:v2")
+    ids = changed_location_ids(days=14 if first else 2)
     found, stats = [], {}
+    todo = []
     for lid in ids:
-        key = f"prospect:{lid}"
-        if store.has(key):
+        if store.has(f"prospect:{lid}"):
             stats["already sent to you"] = stats.get("already sent to you", 0) + 1
-            continue
+        else:
+            todo.append(lid)
+
+    def fetch(lid):
         try:
-            loc = _get(f"locations/{lid}")
+            return _get(f"locations/{lid}"), None
         except Exception as exc:
-            stats[f"could not read ({type(exc).__name__})"] = stats.get(f"could not read ({type(exc).__name__})", 0) + 1
-            continue
-        p = qualify(loc, stats)
-        if p:
-            found.append(p)
-    store.add_many(["radar:initialised"])
+            return None, type(exc).__name__
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=6) as pool:  # a few at a time, polite to the CQC API
+        for loc, err in pool.map(fetch, todo):
+            if err:
+                stats[f"could not read ({err})"] = stats.get(f"could not read ({err})", 0) + 1
+                continue
+            p = qualify(loc, stats)
+            if p:
+                found.append(p)
+    store.add_many(["radar:initialised:v2"])
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     # Priority regions first, then Inadequate before Requires improvement.
     found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
@@ -218,7 +228,7 @@ def run(store, telegram) -> None:
     if not found:
         telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports today "
                               f"({len(ids)} CQC records checked"
-                              + (f" over the last {REPORT_MAX_AGE_DAYS} days" if first else "") + ").\n\nWhy they were ruled out:\n" + breakdown)
+                              + (f" over the last 14 days" if first else "") + ").\n\nWhy they were ruled out:\n" + breakdown)
         return
 
     suppressed = set(store.suppressed())

@@ -104,7 +104,7 @@ After each article goes live, add its title to `existing_articles.txt` so it is 
 
 ## CQC report radar (client outreach)
 
-After the topics, the same morning job checks the CQC API for adult social care services whose **new** report (last 10 days) is rated Inadequate or Requires improvement. For each one it finds the published contact email on the service's own website, checks the provider's company number, and drafts a short, kind email offering a free 30-minute call plus the matching free article.
+After the topics, the same morning job checks the CQC API for adult social care services whose **recent** report (dated in the last 45 days) is rated Inadequate or Requires improvement. For each one it finds the published contact email on the service's own website, checks the provider's company number, and drafts a short, kind email offering a free 30-minute call plus the matching free article.
 
 What arrives on Telegram: a summary, then one message per service (P1, P2 ...) with the full draft. Nothing is ever sent automatically:
 
@@ -120,6 +120,6 @@ Setup: register free at api-portal.service.cqc.org.uk, copy your primary key, an
 | Setting | Default | Meaning |
 |---|---|---|
 | `RADAR_MAX_PER_DAY` | 10 | Most prospects per morning |
-| `RADAR_REPORT_MAX_AGE_DAYS` | 10 | Only reports published this recently |
+| `RADAR_REPORT_MAX_AGE_DAYS` | 45 | Only reports published this recently |
 | `RADAR_PRIORITY_REGIONS` | South East,London | Listed first |
 | `RADAR_ONLY_PRIORITY_REGIONS` | unset | Set to 1 to ignore other regions |
