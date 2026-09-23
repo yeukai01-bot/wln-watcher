@@ -75,22 +75,28 @@ def _parse_date(s: str | None) -> datetime | None:
         return None
 
 
-def qualify(loc: dict) -> dict | None:
+def qualify(loc: dict, stats: dict | None = None) -> dict | None:
     """Return a prospect summary if this location has a fresh Inadequate / Requires improvement report."""
+    stats = stats if stats is not None else {}
+
+    def no(reason: str):
+        stats[reason] = stats.get(reason, 0) + 1
+        return None
+
     if (loc.get("registrationStatus") or "").lower() != "registered":
-        return None
+        return no("not registered")
     if (loc.get("type") or "").lower() not in SOCIAL_CARE_TYPES:
-        return None
+        return no("not adult social care")
     overall = ((loc.get("currentRatings") or {}).get("overall") or {})
     rating = overall.get("rating")
     if rating not in TARGET_RATINGS:
-        return None
+        return no("rated Good/Outstanding or not rated")
     report_date = _parse_date(overall.get("reportDate"))
     if not report_date or report_date < datetime.now(timezone.utc) - timedelta(days=REPORT_MAX_AGE_DAYS):
-        return None
+        return no("report older than %d days" % REPORT_MAX_AGE_DAYS)
     region = loc.get("region") or ""
     if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
-        return None
+        return no("outside priority regions")
     kq = [
         f"{k.get('name')}: {k.get('rating')}"
         for k in (overall.get("keyQuestionRatings") or [])
@@ -187,25 +193,32 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    ids = changed_location_ids(days=2)
-    found = []
+    first = not store.has("radar:initialised")
+    ids = changed_location_ids(days=REPORT_MAX_AGE_DAYS if first else 2)
+    found, stats = [], {}
     for lid in ids:
         key = f"prospect:{lid}"
         if store.has(key):
+            stats["already sent to you"] = stats.get("already sent to you", 0) + 1
             continue
         try:
             loc = _get(f"locations/{lid}")
-        except Exception:
+        except Exception as exc:
+            stats[f"could not read ({type(exc).__name__})"] = stats.get(f"could not read ({type(exc).__name__})", 0) + 1
             continue
-        p = qualify(loc)
+        p = qualify(loc, stats)
         if p:
             found.append(p)
+    store.add_many(["radar:initialised"])
+    breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     # Priority regions first, then Inadequate before Requires improvement.
     found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
     found = found[:MAX_PROSPECTS]
 
     if not found:
-        telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports today ({len(ids)} CQC records checked).")
+        telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports today "
+                              f"({len(ids)} CQC records checked"
+                              + (f" over the last {REPORT_MAX_AGE_DAYS} days" if first else "") + ").\n\nWhy they were ruled out:\n" + breakdown)
         return
 
     suppressed = set(store.suppressed())
