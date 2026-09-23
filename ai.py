@@ -148,13 +148,30 @@ Do all of the following:
 4. Flag anything opinionated, political, critical of an organisation, or likely to be controversial.
 5. Keep the voice, structure, placeholders, LEAD MAGNET SPEC and NOTES FOR YEUKAI sections.
 
-Return ONLY JSON: {{"supported": n, "unsupported": n, "claims": [{{"claim": "", "supported": true, "evidence": ""}}],
-"controversy_flags": [""], "ready_for_review": true, "corrected_markdown": ""}}"""
+Reply in exactly this format and nothing else:
+===SUMMARY===
+{{"supported": n, "unsupported": n, "controversy_flags": ["..."], "ready_for_review": true}}
+===ARTICLE===
+(the full corrected article in markdown, including front matter, LEAD MAGNET SPEC and NOTES FOR YEUKAI)
+===END==="""
 
 
 def fact_check(draft_md: str, source_text: str) -> dict:
-    reply = _ask(CHECK_SYSTEM, CHECK_USER.format(source=source_text, draft=draft_md), max_tokens=16000)
-    return _json(reply)
+    """Second pass. Never loses the draft: if the reply cannot be read, the draft goes through flagged."""
+    reply = _ask(CHECK_SYSTEM, CHECK_USER.format(source=source_text, draft=draft_md), max_tokens=20000)
+    summary, article = {}, ""
+    try:
+        head, rest = reply.split("===ARTICLE===", 1)
+        article = rest.split("===END===", 1)[0].strip()
+        summary = _json(head.split("===SUMMARY===", 1)[-1])
+    except Exception:
+        pass
+    if len(article) < 0.6 * len(draft_md):  # truncated or missing: keep the original draft
+        return {"supported": "?", "unsupported": "?", "corrected_markdown": draft_md,
+                "controversy_flags": ["Automatic fact check could not be completed; check every date and figure against the source before publishing."]}
+    summary["corrected_markdown"] = article
+    summary.setdefault("controversy_flags", [])
+    return summary
 
 
 def draft_and_check(topic: dict) -> tuple[str | None, dict | None, str]:
