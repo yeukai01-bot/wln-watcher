@@ -65,8 +65,9 @@ def _draft_in_background(aid: str) -> None:
         )
     else:
         a["problem"] = problem
+        a["status"] = "failed"  # never leave a draftless item waiting in the publishing queue
         store.put_approval(a)
-        telegram.send_message(f"Topic {a['number']} ({a['headline']}): {problem}")
+        telegram.send_message(f"Topic {a['number']} ({a['headline']}): {problem}\nIt has been taken out of the queue. Check the link and send write <link> again.")
 
 
 def handle_text(text: str) -> str:
@@ -84,7 +85,8 @@ def handle_text(text: str) -> str:
         )
     w = re.match(r"^(write|draft|article)\s+(https?://\S+)\s*(.*)$", text.strip(), re.I | re.S)
     if w:
-        return request_article(w.group(2), w.group(3).strip())
+        url = w.group(2).rstrip(".,;:!?)]}'\"")
+        return request_article(url, w.group(3).strip().lstrip(".,;: ").strip())
     m = re.match(r"^(cancel|stop|withdraw)\s+(\d+)$", t)
     if m:
         n = int(m.group(2))
@@ -127,7 +129,11 @@ def _page_title(url: str) -> str:
     from bs4 import BeautifulSoup
 
     try:
-        r = requests.get(url, headers={"User-Agent": "WellLedNetworkWatcher/1.0"}, timeout=30)
+        import sources
+
+        r = requests.get(url, headers=sources.BROWSER_UA, timeout=30)
+        if r.status_code >= 400:
+            return ""
         soup = BeautifulSoup(r.text, "html.parser")
         h1 = soup.find("h1")
         title = (h1.get_text(" ", strip=True) if h1 else "") or (soup.title.get_text(strip=True) if soup.title else "")
@@ -146,7 +152,9 @@ def request_article(url: str, note: str) -> str:
     if latest.get("date") != today:
         latest = {"date": today, "topics": []}
     number = max([x["number"] for x in latest["topics"]] + [0]) + 1
-    title = _page_title(url) or url
+    title = _page_title(url)
+    if not title or re.search(r"couldn.t find|not found|page not found|error 404", title, re.I):
+        return (f"I could not open that page: {url}\nPlease check the link (copy it straight from the address bar) and send write <link> again.")
     topic = {
         "number": number, "headline": f"Article on: {title}", "angle": note or "Explain what this means for adult social care providers in England and what to do now.",
         "product": "", "lead_magnet": "", "key_date": "", "source": "Requested by Yeukai", "source_title": title,

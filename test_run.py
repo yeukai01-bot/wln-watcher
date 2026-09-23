@@ -100,11 +100,15 @@ print("REPLY SERVICE TESTS PASSED")
 # ---------------- write <link> ----------------
 web._page_title = lambda url: "Mandatory training requirement on learning disability and autism"
 sent.clear()
-r = c.post("/telegram/s3cret", json={"message": {"chat": {"id": 42}, "text": "write https://www.cqc.org.uk/news/mandatory-training focus on what RMs must evidence"}})
+r = c.post("/telegram/s3cret", json={"message": {"chat": {"id": 42}, "text": "Write https://www.cqc.org.uk/news/mandatory-training. Focus on what RMs must evidence"}})
 _t.sleep(1)
 msgs = [s[1] for s in sent if s[0] == "msg"]
 assert "Got it. Topic" in msgs[0], msgs
 assert any(s[0] == "doc" for s in sent)
 ap = c.get("/approvals", headers={"X-Key": "k"}).get_json()
-assert any("Mandatory training" in a["headline"] and a["angle"].startswith("focus") for a in ap), ap
+assert any("Mandatory training" in a["headline"] and a["angle"].startswith("Focus") and a["url"].endswith("training") for a in ap), ap
 print("WRITE COMMAND TESTS PASSED")
+
+web._page_title = lambda url: "Sorry, we couldn't find that page"
+assert "could not open that page" in say("write https://www.cqc.org.uk/news/nope")[0]
+print("BAD LINK TEST PASSED")

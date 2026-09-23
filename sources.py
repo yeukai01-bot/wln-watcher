@@ -17,6 +17,11 @@ import requests
 from bs4 import BeautifulSoup
 
 UA = {"User-Agent": "WellLedNetworkWatcher/1.0 (+https://www.welllednetwork.com)"}
+# Some official sites refuse unknown bots when reading a single article, so article reads use a normal browser identity.
+BROWSER_UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Accept-Language": "en-GB,en;q=0.9",
+}
 TIMEOUT = 30
 
 
@@ -176,7 +181,7 @@ def page_text(url: str, limit: int = 18000) -> str:
     if not url.startswith("http"):
         return ""
     try:
-        r = requests.get(url, headers=UA, timeout=TIMEOUT)
+        r = requests.get(url, headers=BROWSER_UA, timeout=TIMEOUT)
         r.raise_for_status()
     except Exception:
         return ""
