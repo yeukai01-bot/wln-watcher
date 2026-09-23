@@ -21,7 +21,7 @@ import sources
 
 API = "https://api.service.cqc.org.uk/public/v1"
 TARGET_RATINGS = {"Inadequate", "Requires improvement"}
-REPORT_MAX_AGE_DAYS = int(os.getenv("RADAR_REPORT_MAX_AGE_DAYS", "45"))
+REPORT_MAX_AGE_DAYS = int(os.getenv("RADAR_REPORT_MAX_AGE_DAYS", "30"))
 MAX_PROSPECTS = int(os.getenv("RADAR_MAX_PER_DAY", "10"))
 PRIORITY_REGIONS = [r.strip().lower() for r in os.getenv("RADAR_PRIORITY_REGIONS", "South East,London").split(",") if r.strip()]
 ONLY_PRIORITY = os.getenv("RADAR_ONLY_PRIORITY_REGIONS") == "1"
@@ -91,8 +91,14 @@ def qualify(loc: dict, stats: dict | None = None) -> dict | None:
     rating = overall.get("rating")
     if rating not in TARGET_RATINGS:
         return no("rated Good/Outstanding or not rated")
-    report_date = _parse_date(overall.get("reportDate"))
+    published = _parse_date((loc.get("lastReport") or {}).get("publicationDate"))
+    report_date = published or _parse_date(overall.get("reportDate"))
     if not report_date or report_date < datetime.now(timezone.utc) - timedelta(days=REPORT_MAX_AGE_DAYS):
+        samples = stats.setdefault("_samples", [])
+        if len(samples) < 3:
+            samples.append(f"{loc.get('name')}: {rating}, rating report {overall.get('reportDate')}, "
+                           f"last report published {(loc.get('lastReport') or {}).get('publicationDate')}, "
+                           f"last inspection {(loc.get('lastInspection') or {}).get('date')}")
         return no("report older than %d days" % REPORT_MAX_AGE_DAYS)
     region = loc.get("region") or ""
     if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
@@ -193,7 +199,7 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:v2")
+    first = not store.has("radar:initialised:v3")
     ids = changed_location_ids(days=14 if first else 2)
     found, stats = [], {}
     todo = []
@@ -219,8 +225,11 @@ def run(store, telegram) -> None:
             p = qualify(loc, stats)
             if p:
                 found.append(p)
-    store.add_many(["radar:initialised:v2"])
+    store.add_many(["radar:initialised:v3"])
+    samples = stats.pop("_samples", [])
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
+    if samples:
+        breakdown += "\n\nExamples of older reports:\n" + "\n".join(f"- {s}" for s in samples)
     # Priority regions first, then Inadequate before Requires improvement.
     found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
     found = found[:MAX_PROSPECTS]
