@@ -40,7 +40,7 @@ GOVUK_FEEDS = {
     "GOV.UK: Department of Health and Social Care": "https://www.gov.uk/search/all.atom?organisations%5B%5D=department-of-health-and-social-care&order=updated-newest",
     "GOV.UK: adult social care": "https://www.gov.uk/search/all.atom?keywords=%22adult+social+care%22&order=updated-newest",
     "GOV.UK: care worker visas and sponsorship": "https://www.gov.uk/search/all.atom?keywords=care+worker+sponsor&order=updated-newest",
-    "GOV.UK: immigration rules changes": "https://www.gov.uk/government/collections/immigration-rules-statement-of-changes.atom",
+    "GOV.UK: immigration rules changes": "https://www.gov.uk/search/all.atom?keywords=%22statement+of+changes+to+the+immigration+rules%22&order=updated-newest",
     "GOV.UK: Employment Rights Act": "https://www.gov.uk/search/all.atom?keywords=%22Employment+Rights+Act%22&order=updated-newest",
     "GOV.UK: Liberty Protection Safeguards and DoLS": "https://www.gov.uk/search/all.atom?keywords=deprivation+of+liberty&order=updated-newest",
     "GOV.UK: Oliver McGowan training": "https://www.gov.uk/search/all.atom?keywords=%22Oliver+McGowan%22&order=updated-newest",
@@ -58,8 +58,7 @@ LEGISLATION_KEYWORDS = re.compile(
 # Pages without a feed: read the listing and pick up links that look like articles.
 HTML_LISTINGS = {
     "CQC news": ("https://www.cqc.org.uk/news", r"^/news/[a-z0-9-]+$"),
-    "CQC guidance updates": ("https://www.cqc.org.uk/guidance-regulation/providers", r"^/guidance-regulation/providers/[a-z0-9-/]+$"),
-    "Skills for Care news": ("https://www.skillsforcare.org.uk/News-and-events/News/News.aspx", r"/News-and-events/News/[A-Za-z0-9-]+\.aspx$"),
+    "Skills for Care news": ("https://www.skillsforcare.org.uk/news-and-events/News.aspx", r"(?i)^/news-and-events/news/[a-z0-9-]+$"),
     "Acas Employment Rights Act": ("https://www.acas.org.uk/employment-rights-act-2025", r"^/employment-rights-act-2025/[a-z0-9-/]+$"),
 }
 

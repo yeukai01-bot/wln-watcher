@@ -96,3 +96,15 @@ assert "Cancelled topic 2" in say("cancel 2")[0]
 assert c.get("/approvals", headers={"X-Key": "k"}).get_json() == []
 assert "did not understand" in say("hello there")[0]
 print("REPLY SERVICE TESTS PASSED")
+
+# ---------------- write <link> ----------------
+web._page_title = lambda url: "Mandatory training requirement on learning disability and autism"
+sent.clear()
+r = c.post("/telegram/s3cret", json={"message": {"chat": {"id": 42}, "text": "write https://www.cqc.org.uk/news/mandatory-training focus on what RMs must evidence"}})
+_t.sleep(1)
+msgs = [s[1] for s in sent if s[0] == "msg"]
+assert "Got it. Topic" in msgs[0], msgs
+assert any(s[0] == "doc" for s in sent)
+ap = c.get("/approvals", headers={"X-Key": "k"}).get_json()
+assert any("Mandatory training" in a["headline"] and a["angle"].startswith("focus") for a in ap), ap
+print("WRITE COMMAND TESTS PASSED")

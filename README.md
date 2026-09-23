@@ -6,7 +6,7 @@ Every morning this job reads official sources, picks the new developments worth 
 
 - GOV.UK feeds: Care Quality Commission, Department of Health and Social Care, adult social care, care worker visas and sponsorship, immigration rules changes, the Employment Rights Act, deprivation of liberty, and Oliver McGowan training
 - New legislation on legislation.gov.uk, filtered to care-relevant law
-- CQC news and CQC provider guidance pages
+- CQC news
 - Skills for Care news
 - Acas Employment Rights Act pages
 - Optional: a Google Sheet (published as CSV) of questions from Facebook and LinkedIn groups, with the columns `date, group, question, link`. The job never logs into Facebook or LinkedIn itself.
@@ -35,6 +35,7 @@ Reply in the same chat the morning list arrives in:
 | `1 3` | Topics 1 and 3 are approved. Any topic without a draft is drafted and fact-checked straight away, and the draft is sent to you. |
 | `queue` | Shows what is approved and waiting to be published. |
 | `cancel 2` | Withdraws topic 2 before it goes live. |
+| `write <link>` | Asks for an article on any page you've found, for example a CQC news item. You can add a note after the link. It is approved and drafted straight away. |
 | `help` | Shows these instructions. |
 
 - **Who can use it:** only messages from your own chat are accepted.

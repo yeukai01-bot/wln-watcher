@@ -32,6 +32,7 @@ HELP = (
     "Reply with topic numbers from this morning's list, e.g. 1 3, to approve them for publishing.\n"
     "queue shows what is waiting.\n"
     "cancel 2 withdraws topic 2 if it has not gone live.\n"
+    "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
     "Approved topics are written, checked and published at the next publishing run, and you get the live link here."
 )
 
@@ -81,6 +82,9 @@ def handle_text(text: str) -> str:
             f"{a['number']} ({a['date']}): {a['headline']}" + ("" if a.get("draft") else "  [draft in progress]")
             for a in waiting
         )
+    w = re.match(r"^(write|draft|article)\s+(https?://\S+)\s*(.*)$", text.strip(), re.I | re.S)
+    if w:
+        return request_article(w.group(2), w.group(3).strip())
     m = re.match(r"^(cancel|stop|withdraw)\s+(\d+)$", t)
     if m:
         n = int(m.group(2))
@@ -116,6 +120,44 @@ def handle_text(text: str) -> str:
             msg += ("\n\n" if msg else "") + f"Not on {latest['date']}'s list: {', '.join(missing)}"
         return msg
     return "I did not understand that. " + HELP
+
+
+def _page_title(url: str) -> str:
+    import requests
+    from bs4 import BeautifulSoup
+
+    try:
+        r = requests.get(url, headers={"User-Agent": "WellLedNetworkWatcher/1.0"}, timeout=30)
+        soup = BeautifulSoup(r.text, "html.parser")
+        h1 = soup.find("h1")
+        title = (h1.get_text(" ", strip=True) if h1 else "") or (soup.title.get_text(strip=True) if soup.title else "")
+        return title[:200]
+    except Exception:
+        return ""
+
+
+def request_article(url: str, note: str) -> str:
+    """Yeukai asks for an article on a page he found. It is added to today's list and approved at once."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d")
+    latest = store.latest() or {"date": today, "topics": []}
+    if latest.get("date") != today:
+        latest = {"date": today, "topics": []}
+    number = max([x["number"] for x in latest["topics"]] + [0]) + 1
+    title = _page_title(url) or url
+    topic = {
+        "number": number, "headline": f"Article on: {title}", "angle": note or "Explain what this means for adult social care providers in England and what to do now.",
+        "product": "", "lead_magnet": "", "key_date": "", "source": "Requested by Yeukai", "source_title": title,
+        "url": url, "draft": None,
+    }
+    latest["topics"].append(topic)
+    store.save_latest(latest)
+    a = store.put_approval({**topic, "date": today, "status": "approved", "approved_at": int(time.time())})
+    threading.Thread(target=_draft_in_background, args=(a["id"],), daemon=True).start()
+    return (f"Got it. Topic {number}: {title}\nI am drafting it now and will send the draft here. "
+            f"It will go live at the next publishing run. Reply cancel {number} to stop it.")
 
 
 @app.post("/telegram/<secret>")
