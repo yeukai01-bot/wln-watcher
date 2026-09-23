@@ -190,7 +190,10 @@ PAGE1 = "<main><div class='search-results'>" + "".join(CARD(f"1-{i}", f"Home {i}
 PAGE2 = "<main><div class='search-results'>" + CARD("1-77", "Last Home", "Homecare service", "Inadequate") + CARD("1-88", "Fine", "Care home", "Good") + "</div></main>"
 calls = []
 def fake_site(path, params=None):
-    calls.append(dict(params or []).get("page", "1"))
+    from urllib.parse import urlparse, parse_qsl
+    params = parse_qsl(urlparse(path).query)
+    assert path.startswith("/location/") or ("filters[]", "overallRating:Requires improvement") in params and ("last-published", "week") in params, params
+    calls.append(dict(params).get("page", "1"))
     if path.startswith("/location/"):
         return "<main>Overview\nReport published:\n 3 September 2026 \nSafe \nInadequate\nCaring\nGood\nWell-led \nRequires improvement\n</main>"
     return PAGE2 if dict(params).get("page") == "2" else PAGE1

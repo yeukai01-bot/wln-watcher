@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import quote, urlencode, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -158,11 +158,16 @@ def site_recent(period: str = "week") -> tuple[dict, dict]:
             if page > 1:
                 params += [("ajax", "0"), ("page", str(page))]
             try:
-                soup = BeautifulSoup(_site("/search/all", params), "html.parser")
+                soup = BeautifulSoup(_site("/search/all?" + urlencode(params, quote_via=quote)), "html.parser")
             except Exception as exc:
                 stats[f"website search failed ({type(exc).__name__})"] = stats.get(f"website search failed ({type(exc).__name__})", 0) + 1
                 break
             links = soup.select("h2.service-header__title a")
+            if page == 1 and not links and not stats.get("_seen_empty"):
+                stats["_seen_empty"] = 1
+                title = (soup.title.get_text(strip=True) if soup.title else "no title")[:80]
+                found_txt = (re.search(r"We found[^.<]{0,80}|Sorry but there were no results", soup.get_text(" ")) or [""])[0]
+                stats[f"empty search page for {place}: '{title}' {found_txt}"] = 1
             for a in links:
                 m = re.search(r"/location/(1-\d+)", a.get("href", ""))
                 if not m:
@@ -264,7 +269,7 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:site1")
+    first = not store.has("radar:initialised:site2")
     period = "month" if first else "week"
     candidates, stats = site_recent(period)
     found = []
@@ -311,7 +316,8 @@ def run(store, telegram) -> None:
                 stats[why] = stats.get(why, 0) + 1
             elif p:
                 found.append(p)
-    store.add_many(["radar:initialised:site1"])
+    store.add_many(["radar:initialised:site2"])
+    stats.pop("_seen_empty", None)
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     # Priority regions first, then Inadequate before Requires improvement.
     found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
