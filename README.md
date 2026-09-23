@@ -101,3 +101,24 @@ After each article goes live, add its title to `existing_articles.txt` so it is 
 - a second run reports nothing new
 - approving, queueing, cancelling and publishing through replies all work
 - replies from strangers are ignored
+
+## CQC report radar (client outreach)
+
+After the topics, the same morning job checks the CQC API for adult social care services whose **new** report (last 10 days) is rated Inadequate or Requires improvement. For each one it finds the published contact email on the service's own website, checks the provider's company number, and drafts a short, kind email offering a free 30-minute call plus the matching free article.
+
+What arrives on Telegram: a summary, then one message per service (P1, P2 ...) with the full draft. Nothing is sent until you reply:
+
+- `send all` or `send P1 P3`: queue those emails. The 9am Claude run sends them from your Gmail and reports back here.
+- `leads`: today's list and what has been sent.
+- `remove name@example.com`: never email that address again. "remove" replies in Gmail are picked up automatically at the 9am run.
+
+UK law (PECR): unsolicited emails are only drafted to send to limited companies. Sole traders and partnerships are marked **call or write**. Every email carries an opt-out line.
+
+Setup: register free at api-portal.service.cqc.org.uk, copy your primary key, and add it to the `wln-secrets` environment group in Render as `CQC_API_KEY`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `RADAR_MAX_PER_DAY` | 10 | Most prospects per morning |
+| `RADAR_REPORT_MAX_AGE_DAYS` | 10 | Only reports published this recently |
+| `RADAR_PRIORITY_REGIONS` | South East,London | Listed first |
+| `RADAR_ONLY_PRIORITY_REGIONS` | unset | Set to 1 to ignore other regions |

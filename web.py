@@ -33,7 +33,13 @@ HELP = (
     "queue shows what is waiting.\n"
     "cancel 2 withdraws topic 2 if it has not gone live.\n"
     "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
-    "Approved topics are written, checked and published at the next publishing run, and you get the live link here."
+    "Approved topics are written, checked and published at the next publishing run, and you get the live link here.\n\n"
+    "Report radar (CQC outreach):\n"
+    "send all sends every emailable draft from today's radar list.\n"
+    "send P1 P3 sends only those.\n"
+    "leads shows today's radar list and what has been sent.\n"
+    "remove name@example.com stops all future emails to that address.\n"
+    "Approved emails go from your Gmail at the next 9am run."
 )
 
 
@@ -83,6 +89,19 @@ def handle_text(text: str) -> str:
             f"{a['number']} ({a['date']}): {a['headline']}" + ("" if a.get("draft") else "  [draft in progress]")
             for a in waiting
         )
+    if t in ("leads", "prospects", "radar"):
+        lst = store.latest_prospects()
+        if not lst:
+            return "No radar list yet."
+        return "Today's radar list:\n" + "\n".join(
+            f"{p['code']} {p['location_name']} ({p['rating']}): {p['status']}" + ("" if p.get("can_email") else ", call or write") for p in lst)
+    s = re.match(r"^send\s+(.+)$", t)
+    if s:
+        return approve_sends(s.group(1))
+    rm = re.match(r"^(remove|suppress|unsubscribe)\s+(\S+@\S+)$", t)
+    if rm:
+        store.add_suppressed(rm.group(2).strip(".,;"))
+        return f"Done. {rm.group(2)} will never be emailed by the radar."
     w = re.match(r"^(write|draft|article)\s+(https?://\S+)\s*(.*)$", text.strip(), re.I | re.S)
     if w:
         url = w.group(2).rstrip(".,;:!?)]}'\"")
@@ -122,6 +141,38 @@ def handle_text(text: str) -> str:
             msg += ("\n\n" if msg else "") + f"Not on {latest['date']}'s list: {', '.join(missing)}"
         return msg
     return "I did not understand that. " + HELP
+
+
+def approve_sends(which: str) -> str:
+    lst = store.latest_prospects()
+    if not lst:
+        return "There is no radar list to send from yet."
+    by_code = {p["code"].lower(): p for p in lst}
+    if which.strip() in ("all", "everything", "them all"):
+        chosen = list(lst)
+        missing = []
+    else:
+        codes = [c.lower() if c.lower().startswith("p") else "p" + c for c in re.findall(r"p?\d+", which)]
+        chosen = [by_code[c] for c in dict.fromkeys(codes) if c in by_code]
+        missing = [c.upper() for c in codes if c not in by_code]
+    queued, skipped = [], []
+    suppressed = set(store.suppressed())
+    for p in chosen:
+        if not p.get("can_email") or p.get("email", "") in suppressed:
+            skipped.append(f"{p['code']} (call or write, not emailed)")
+        elif p.get("status") in ("approved_to_send", "sent"):
+            skipped.append(f"{p['code']} (already {p['status'].replace('_', ' ')})")
+        else:
+            p["status"] = "approved_to_send"
+            p["approved_at"] = int(time.time())
+            store.put_prospect(p)
+            queued.append(f"{p['code']} {p['location_name']} to {p['email']}")
+    msg = ("Queued to send from your Gmail at the next 9am run:\n" + "\n".join(queued)) if queued else "Nothing new queued."
+    if skipped:
+        msg += "\n\nNot queued: " + ", ".join(skipped)
+    if missing:
+        msg += "\n\nNot on today's radar list: " + ", ".join(missing)
+    return msg
 
 
 def _page_title(url: str) -> str:
@@ -209,6 +260,46 @@ def mark_done(aid: str):
     else:
         telegram.send_message(f"Not published: {a['headline']}\n{a['note']}")
     return jsonify({"ok": True})
+
+
+@app.get("/prospects")
+def list_prospects():
+    if not _key_ok():
+        abort(403)
+    status = request.args.get("status", "approved_to_send")
+    suppressed = set(store.suppressed())
+    return jsonify([p for p in store.prospects(status) if p.get("email", "") not in suppressed])
+
+
+@app.post("/prospects/<pid>/sent")
+def mark_sent(pid: str):
+    if not _key_ok():
+        abort(403)
+    p = store.get_prospect(pid)
+    if not p:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    ok = body.get("status", "sent") == "sent"
+    p["status"] = "sent" if ok else "send_failed"
+    p["sent_at"] = int(time.time())
+    p["note"] = body.get("note", "")
+    store.put_prospect(p)
+    telegram.send_message(
+        (f"Sent: {p['code']} {p['location_name']} ({p['email']})" if ok else f"Could not send {p['code']} {p['location_name']}: {p['note']}"))
+    return jsonify({"ok": True})
+
+
+@app.post("/suppress")
+def suppress():
+    if not _key_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or [body.get("email", "")]
+    for e in emails:
+        store.add_suppressed(e)
+    if any(emails):
+        telegram.send_message("Asked not to be contacted again, now blocked: " + ", ".join(e for e in emails if e))
+    return jsonify({"ok": True, "suppressed": len(store.suppressed())})
 
 
 @app.get("/")

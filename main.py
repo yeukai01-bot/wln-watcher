@@ -26,7 +26,12 @@ UK = ZoneInfo("Europe/London")
 
 def existing_titles() -> list[str]:
     p = Path(__file__).parent / "existing_articles.txt"
-    return [l.strip() for l in p.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    titles = [l.strip() for l in p.read_text().splitlines() if l.strip() and not l.startswith("#")]
+    try:  # articles published through the approvals queue count as covered too
+        titles += [a["headline"] for a in Store().approvals("published") if a.get("headline")]
+    except Exception:
+        pass
+    return list(dict.fromkeys(titles))
 
 
 def slugify(s: str) -> str:
@@ -141,16 +146,35 @@ def run() -> int:
     return 0
 
 
-def main() -> None:
+def run_radar() -> None:
+    """CQC report radar, run separately so a problem in one never stops the other."""
+    import prospects
+
     try:
-        sys.exit(run())
+        prospects.run(Store(), telegram)
     except Exception:
         tb = traceback.format_exc()
         print(tb)
         try:
+            telegram.send_message("The CQC report radar hit an error today:\n\n" + tb[-2000:])
+        except Exception:
+            pass
+
+
+def main() -> None:
+    rc = 0
+    try:
+        rc = run()
+    except Exception:
+        rc = 1
+        tb = traceback.format_exc()
+        print(tb)
+        try:
             telegram.send_message("The Well-Led Network morning watcher hit an error and stopped:\n\n" + tb[-3000:])
-        finally:
-            sys.exit(1)
+        except Exception:
+            pass
+    run_radar()
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

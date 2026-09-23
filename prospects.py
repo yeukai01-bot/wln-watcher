@@ -1,0 +1,248 @@
+"""Report radar: find adult social care services whose new CQC report rates them Inadequate or
+Requires improvement, and draft a short, respectful email offering practical help.
+
+Nothing is sent from here. Drafts go to Yeukai on Telegram; he replies "send P1 P3" or "send all",
+and the scheduled Claude publishing task sends the approved emails from his Gmail.
+
+Data: the CQC public API (free key from the CQC Developer Portal, stored as CQC_API_KEY on Render).
+"""
+from __future__ import annotations
+
+import os
+import re
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup
+
+import ai
+import sources
+
+API = "https://api.service.cqc.org.uk/public/v1"
+TARGET_RATINGS = {"Inadequate", "Requires improvement"}
+REPORT_MAX_AGE_DAYS = int(os.getenv("RADAR_REPORT_MAX_AGE_DAYS", "10"))
+MAX_PROSPECTS = int(os.getenv("RADAR_MAX_PER_DAY", "10"))
+PRIORITY_REGIONS = [r.strip().lower() for r in os.getenv("RADAR_PRIORITY_REGIONS", "South East,London").split(",") if r.strip()]
+ONLY_PRIORITY = os.getenv("RADAR_ONLY_PRIORITY_REGIONS") == "1"
+SOCIAL_CARE_TYPES = {"social care org"}
+EMAIL_RX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+BAD_EMAIL_BITS = ("example.", "sentry", "wixpress", ".png", ".jpg", ".gif", ".webp", "domain.com", "yourname", "noreply", "no-reply")
+
+ARTICLES = {
+    "Inadequate": ("Rated Inadequate: What Happens Next, and the Deadlines That Start When the Report Is Published",
+                   "https://www.welllednetwork.com/blog/rated-inadequate-what-happens-next"),
+    "Requires improvement": ("Your Audits Passed but the Inspector Found the Problem: Why Audits Miss What Matters",
+                             "https://www.welllednetwork.com/blog/audits-missed-what-the-inspector-found"),
+}
+
+
+def _headers() -> dict:
+    key = os.getenv("CQC_API_KEY", "")
+    return {"Ocp-Apim-Subscription-Key": key, "Authorization": f"Bearer {key}", "User-Agent": sources.UA["User-Agent"]}
+
+
+def _get(path: str, params: dict | None = None) -> dict:
+    r = requests.get(f"{API}/{path.lstrip('/')}", headers=_headers(), params=params or {}, timeout=40)
+    r.raise_for_status()
+    return r.json()
+
+
+def changed_location_ids(days: int = 2) -> list[str]:
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    ids, page = [], 1
+    while True:
+        data = _get("changes/location", {
+            "startTimestamp": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "endTimestamp": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "page": page, "perPage": 1000,
+        })
+        ids += data.get("changes", [])
+        if page >= int(data.get("totalPages", 1) or 1):
+            break
+        page += 1
+    return list(dict.fromkeys(ids))
+
+
+def _parse_date(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s[:10]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def qualify(loc: dict) -> dict | None:
+    """Return a prospect summary if this location has a fresh Inadequate / Requires improvement report."""
+    if (loc.get("registrationStatus") or "").lower() != "registered":
+        return None
+    if (loc.get("type") or "").lower() not in SOCIAL_CARE_TYPES:
+        return None
+    overall = ((loc.get("currentRatings") or {}).get("overall") or {})
+    rating = overall.get("rating")
+    if rating not in TARGET_RATINGS:
+        return None
+    report_date = _parse_date(overall.get("reportDate"))
+    if not report_date or report_date < datetime.now(timezone.utc) - timedelta(days=REPORT_MAX_AGE_DAYS):
+        return None
+    region = loc.get("region") or ""
+    if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
+        return None
+    kq = [
+        f"{k.get('name')}: {k.get('rating')}"
+        for k in (overall.get("keyQuestionRatings") or [])
+        if k.get("rating") in TARGET_RATINGS
+    ]
+    services = ", ".join(s.get("name", "") for s in (loc.get("gacServiceTypes") or []) if s.get("name"))
+    return {
+        "location_id": loc.get("locationId"),
+        "location_name": loc.get("name"),
+        "provider_id": loc.get("providerId"),
+        "rating": rating,
+        "report_date": report_date.strftime("%d %B %Y"),
+        "weak_key_questions": kq,
+        "service_type": services,
+        "region": region,
+        "local_authority": loc.get("localAuthority") or "",
+        "town": loc.get("postalAddressTownCity") or "",
+        "phone": loc.get("mainPhoneNumber") or "",
+        "website": loc.get("website") or "",
+        "cqc_page": f"https://www.cqc.org.uk/location/{loc.get('locationId')}",
+        "registered_manager": next(
+            (f"{c.get('personGivenName', '')} {c.get('personFamilyName', '')}".strip()
+             for r in (loc.get("regulatedActivities") or []) for c in (r.get("contacts") or [])
+             if "registered manager" in " ".join(c.get("personRoles") or []).lower()), ""),
+    }
+
+
+def find_email(website: str) -> str:
+    """Look for a published contact email on the provider's own website (home and contact pages)."""
+    if not website:
+        return ""
+    base = website if website.startswith("http") else "https://" + website
+    found: list[str] = []
+    for path in ("", "/contact", "/contact-us", "/contact-us/", "/contact/"):
+        try:
+            r = requests.get(urljoin(base.rstrip("/") + "/", path.lstrip("/")), headers=sources.BROWSER_UA, timeout=20)
+            if r.status_code >= 400:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            for a in soup.select('a[href^="mailto:"]'):
+                found.append(a["href"][7:].split("?")[0])
+            found += EMAIL_RX.findall(soup.get_text(" "))
+        except Exception:
+            continue
+        if found:
+            break
+    clean = [e.strip().strip(".").lower() for e in found if not any(b in e.lower() for b in BAD_EMAIL_BITS)]
+    if not clean:
+        return ""
+    preferred = [e for e in clean if e.split("@")[0] in ("info", "enquiries", "enquiry", "admin", "office", "hello", "contact", "manager")]
+    return (preferred or clean)[0]
+
+
+EMAIL_SYSTEM = """You write one short, respectful first-contact email from Yeukai Kajidori to a UK adult social care
+provider that has just received a CQC report rated Inadequate or Requires improvement.
+
+About Yeukai: 23 years in UK health and social care, 15 as a CQC Registered Manager, led two services to Good,
+runs The Well-Led Network (a free community for care leaders at welllednetwork.com).
+
+Rules:
+- British English, warm, calm, plain. No hype, no pressure, no emojis, no dashes used as punctuation.
+- Under 170 words in the body. One clear, low-pressure offer: a free 30-minute call to talk through the report
+  and the first 30 days, plus the free article and tool linked below.
+- Only use facts given to you (service name, rating, report date, key questions rated below Good). Do not
+  criticise the service, CQC or anyone else. Do not say or imply CQC endorses Yeukai. Do not promise any outcome.
+- Acknowledge that a report like this is a hard week for the manager and team.
+- Address the registered manager by first name if one is given, otherwise "Dear [Service name] team".
+- Include this final line exactly: "If you would rather not hear from me again, just reply 'remove' and I will not contact you."
+- Sign off: Kind regards, Yeukai Kajidori, The Well-Led Network, welllednetwork.com, kajidoricollective@gmail.com
+
+Reply in exactly this format:
+SUBJECT: <subject line, under 70 characters, no rating in the subject>
+BODY:
+<email body>"""
+
+
+def draft_email(p: dict) -> tuple[str, str]:
+    title, url = ARTICLES.get(p["rating"], ARTICLES["Inadequate"])
+    user = (
+        f"Service: {p['location_name']} ({p['service_type']}), {p['town']}\n"
+        f"Registered manager: {p['registered_manager'] or 'not listed'}\n"
+        f"Overall rating: {p['rating']}, report published {p['report_date']}\n"
+        f"Key questions rated below Good: {', '.join(p['weak_key_questions']) or 'not listed'}\n"
+        f"Free article to link: {title} {url}\n"
+        f"Free call link: https://tfft.io/CRIkyvF"
+    )
+    reply = ai._ask(EMAIL_SYSTEM, user, max_tokens=1200)
+    subj = re.search(r"SUBJECT:\s*(.+)", reply)
+    body = reply.split("BODY:", 1)[-1].strip()
+    return (subj.group(1).strip() if subj else f"Support after your recent CQC report, {p['location_name']}"), body
+
+
+def run(store, telegram) -> None:
+    if not os.getenv("CQC_API_KEY"):
+        telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
+        return
+    ids = changed_location_ids(days=2)
+    found = []
+    for lid in ids:
+        key = f"prospect:{lid}"
+        if store.has(key):
+            continue
+        try:
+            loc = _get(f"locations/{lid}")
+        except Exception:
+            continue
+        p = qualify(loc)
+        if p:
+            found.append(p)
+    # Priority regions first, then Inadequate before Requires improvement.
+    found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
+    found = found[:MAX_PROSPECTS]
+
+    if not found:
+        telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports today ({len(ids)} CQC records checked).")
+        return
+
+    suppressed = set(store.suppressed())
+    made = []
+    for n, p in enumerate(found, 1):
+        try:
+            prov = _get(f"providers/{p['provider_id']}")
+        except Exception:
+            prov = {}
+        p["provider_name"] = prov.get("name", "")
+        p["companies_house"] = prov.get("companiesHouseNumber", "")
+        p["email"] = find_email(p["website"] or prov.get("website", ""))
+        if p["email"] and p["email"] in suppressed:
+            p["email"] = ""
+            p["note"] = "Previously asked not to be contacted."
+        # UK PECR: unsolicited marketing email is fine to companies (corporate subscribers) but not to
+        # sole traders or partnerships without consent. No company number: call or write instead.
+        p["can_email"] = bool(p["email"] and p["companies_house"])
+        p["subject"], p["body"] = draft_email(p)
+        p["status"] = "drafted"
+        p["code"] = f"P{n}"
+        made.append(store.put_prospect(p))
+        store.add_many([f"prospect:{p['location_id']}"])
+
+    store.save_latest_prospects([m["id"] for m in made])
+    telegram.send_message(
+        f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report.\n\n"
+        "Each draft follows below. Reply 'send all' or e.g. 'send P1 P3'. Emails go from your Gmail at the next 9am run. "
+        "Services without a company number or published email are marked 'call or write', because the law on "
+        "unsolicited emails is stricter for sole traders and partnerships."
+    )
+    for p in made:
+        how = f"Email to: {p['email']}" if p["can_email"] else (
+            "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
+        telegram.send_message(
+            f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
+            f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
+            f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
+            f"{how}\nCQC page: {p['cqc_page']}\n\n"
+            f"Subject: {p['subject']}\n\n{p['body']}"
+        )

@@ -112,3 +112,57 @@ print("WRITE COMMAND TESTS PASSED")
 web._page_title = lambda url: "Sorry, we couldn't find that page"
 assert "could not open that page" in say("write https://www.cqc.org.uk/news/nope")[0]
 print("BAD LINK TEST PASSED")
+
+# ---------------- CQC report radar ----------------
+import prospects
+recent = (now - timedelta(days=3)).strftime("%Y-%m-%d")
+LOCS = {
+    "1-A": {"locationId": "1-A", "providerId": "P-A", "name": "Oak House", "registrationStatus": "Registered", "type": "Social Care Org",
+            "region": "South East", "postalAddressTownCity": "Reading", "mainPhoneNumber": "0118", "website": "www.oakhouse.test",
+            "gacServiceTypes": [{"name": "Residential homes"}],
+            "regulatedActivities": [{"contacts": [{"personGivenName": "Ann", "personFamilyName": "Lee", "personRoles": ["Registered Manager"]}]}],
+            "currentRatings": {"overall": {"rating": "Inadequate", "reportDate": recent, "keyQuestionRatings": [{"name": "Safe", "rating": "Inadequate"}, {"name": "Caring", "rating": "Good"}]}}},
+    "1-B": {"locationId": "1-B", "providerId": "P-B", "name": "Elm Care", "registrationStatus": "Registered", "type": "Social Care Org",
+            "region": "North West", "website": "elm.test", "currentRatings": {"overall": {"rating": "Requires improvement", "reportDate": recent}}},
+    "1-C": {"locationId": "1-C", "providerId": "P-C", "name": "Good Place", "registrationStatus": "Registered", "type": "Social Care Org",
+            "currentRatings": {"overall": {"rating": "Good", "reportDate": recent}}},
+    "1-D": {"locationId": "1-D", "providerId": "P-D", "name": "GP Surgery", "registrationStatus": "Registered", "type": "Primary Medical Services",
+            "currentRatings": {"overall": {"rating": "Inadequate", "reportDate": recent}}},
+    "1-E": {"locationId": "1-E", "providerId": "P-E", "name": "Old Report", "registrationStatus": "Registered", "type": "Social Care Org",
+            "currentRatings": {"overall": {"rating": "Inadequate", "reportDate": "2025-01-01"}}},
+}
+PROVS = {"P-A": {"name": "Oak Ltd", "companiesHouseNumber": "01234567"}, "P-B": {"name": "Elm Partnership"}}
+def radar_get(path, params=None):
+    if path.startswith("changes"): return {"changes": list(LOCS), "totalPages": 1}
+    if path.startswith("locations/"): return LOCS[path.split("/")[1]]
+    if path.startswith("providers/"): return PROVS.get(path.split("/")[1], {})
+prospects._get = radar_get
+prospects.find_email = lambda site: {"www.oakhouse.test": "info@oakhouse.test", "elm.test": "hello@elm.test"}.get(site, "")
+prospects.draft_email = lambda p: (f"Support after your report, {p['location_name']}", "Dear Ann,\nbody\nIf you would rather not hear from me again, just reply 'remove' and I will not contact you.")
+os.environ.pop("CQC_API_KEY", None)
+sent.clear(); prospects.run(web.store, web.telegram)
+assert "CQC_API_KEY" in sent[0][1]
+os.environ["CQC_API_KEY"] = "x"
+sent.clear(); prospects.run(web.store, web.telegram)
+m = [s[1] for s in sent if s[0] == "msg"]
+assert "2 services" in m[0], m[0]
+assert m[1].startswith("P1. Oak House") and "Email to: info@oakhouse.test" in m[1], m[1]     # South East + Inadequate first
+assert m[2].startswith("P2. Elm Care") and "Call or write" in m[2], m[2]                      # no company number
+assert not any("Good Place" in x or "GP Surgery" in x or "Old Report" in x for x in m)
+sent.clear(); prospects.run(web.store, web.telegram)
+assert "no new" in sent[0][1]                                                                 # not reported twice
+out = say("send all")[0]
+assert "P1 Oak House" in out and "P2 (call or write" in out, out
+assert "already approved to send" in say("send P1")[0]
+assert "Not on today's radar list: P9" in say("send 9")[0]
+q = c.get("/prospects", headers={"X-Key": "k"}).get_json()
+assert len(q) == 1 and q[0]["email"] == "info@oakhouse.test" and "remove" in q[0]["body"]
+assert c.get("/prospects").status_code == 403
+sent.clear(); c.post(f"/prospects/{q[0]['id']}/sent", headers={"X-Key": "k"}, json={"status": "sent"})
+assert any("Sent: P1" in s[1] for s in sent)
+assert c.get("/prospects", headers={"X-Key": "k"}).get_json() == []
+assert "sent" in say("leads")[0]
+c.post("/suppress", headers={"X-Key": "k"}, json={"emails": ["INFO@oakhouse.test"]})
+assert "info@oakhouse.test" in web.store.suppressed()
+assert "will never be emailed" in say("remove hello@elm.test")[0]
+print("REPORT RADAR TESTS PASSED")
