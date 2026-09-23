@@ -1,8 +1,8 @@
 """Report radar: find adult social care services whose new CQC report rates them Inadequate or
 Requires improvement, and draft a short, respectful email offering practical help.
 
-Nothing is sent from here. Drafts go to Yeukai on Telegram; he replies "send P1 P3" or "send all",
-and the scheduled Claude publishing task sends the approved emails from his Gmail.
+Nothing is sent automatically. Drafts go to Yeukai on Telegram with a one-tap link that opens each email,
+already addressed and written, in his own mail app. He reads it and presses Send himself.
 
 Data: the CQC public API (free key from the CQC Developer Portal, stored as CQC_API_KEY on Render).
 """
@@ -26,6 +26,7 @@ MAX_PROSPECTS = int(os.getenv("RADAR_MAX_PER_DAY", "10"))
 PRIORITY_REGIONS = [r.strip().lower() for r in os.getenv("RADAR_PRIORITY_REGIONS", "South East,London").split(",") if r.strip()]
 ONLY_PRIORITY = os.getenv("RADAR_ONLY_PRIORITY_REGIONS") == "1"
 SOCIAL_CARE_TYPES = {"social care org"}
+REPLIES_URL = os.getenv("REPLIES_URL", "https://wln-replies.onrender.com").rstrip("/")
 EMAIL_RX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 BAD_EMAIL_BITS = ("example.", "sentry", "wixpress", ".png", ".jpg", ".gif", ".webp", "domain.com", "yourname", "noreply", "no-reply")
 
@@ -232,7 +233,8 @@ def run(store, telegram) -> None:
     store.save_latest_prospects([m["id"] for m in made])
     telegram.send_message(
         f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report.\n\n"
-        "Each draft follows below. Reply 'send all' or e.g. 'send P1 P3'. Emails go from your Gmail at the next 9am run. "
+        "Each draft follows below. Tap 'Open email' to open it in your mail app, already addressed and written; read it and press Send. "
+        "Then reply e.g. 'sent P1 P3' so I keep track. "
         "Services without a company number or published email are marked 'call or write', because the law on "
         "unsolicited emails is stricter for sole traders and partnerships."
     )
@@ -243,6 +245,8 @@ def run(store, telegram) -> None:
             f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
             f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
             f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
-            f"{how}\nCQC page: {p['cqc_page']}\n\n"
+            f"{how}\nCQC page: {p['cqc_page']}\n"
+            + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
+            + "\n"
             f"Subject: {p['subject']}\n\n{p['body']}"
         )

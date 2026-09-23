@@ -106,11 +106,12 @@ After each article goes live, add its title to `existing_articles.txt` so it is 
 
 After the topics, the same morning job checks the CQC API for adult social care services whose **new** report (last 10 days) is rated Inadequate or Requires improvement. For each one it finds the published contact email on the service's own website, checks the provider's company number, and drafts a short, kind email offering a free 30-minute call plus the matching free article.
 
-What arrives on Telegram: a summary, then one message per service (P1, P2 ...) with the full draft. Nothing is sent until you reply:
+What arrives on Telegram: a summary, then one message per service (P1, P2 ...) with the full draft. Nothing is ever sent automatically:
 
-- `send all` or `send P1 P3`: queue those emails. The 9am Claude run sends them from your Gmail and reports back here.
+- Tap **Open email** under a draft. Your mail app opens with the address, subject and message already filled in. Read it and press Send.
+- `sent P1 P3`: record that you sent them.
 - `leads`: today's list and what has been sent.
-- `remove name@example.com`: never email that address again. "remove" replies in Gmail are picked up automatically at the 9am run.
+- `remove name@example.com`: when someone replies "remove", send this and the radar will never draft to them again.
 
 UK law (PECR): unsolicited emails are only drafted to send to limited companies. Sole traders and partnerships are marked **call or write**. Every email carries an opt-out line.
 

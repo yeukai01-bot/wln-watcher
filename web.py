@@ -35,11 +35,10 @@ HELP = (
     "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
     "Approved topics are written, checked and published at the next publishing run, and you get the live link here.\n\n"
     "Report radar (CQC outreach):\n"
-    "send all sends every emailable draft from today's radar list.\n"
-    "send P1 P3 sends only those.\n"
+    "Tap Open email under a draft to open it in your mail app, ready to send. You press Send.\n"
+    "sent P1 P3 records that you sent those.\n"
     "leads shows today's radar list and what has been sent.\n"
-    "remove name@example.com stops all future emails to that address.\n"
-    "Approved emails go from your Gmail at the next 9am run."
+    "remove name@example.com stops the radar ever drafting to that address again."
 )
 
 
@@ -95,9 +94,9 @@ def handle_text(text: str) -> str:
             return "No radar list yet."
         return "Today's radar list:\n" + "\n".join(
             f"{p['code']} {p['location_name']} ({p['rating']}): {p['status']}" + ("" if p.get("can_email") else ", call or write") for p in lst)
-    s = re.match(r"^send\s+(.+)$", t)
+    s = re.match(r"^(sent|done|send)\s+(.+)$", t)
     if s:
-        return approve_sends(s.group(1))
+        return mark_codes_sent(s.group(2))
     rm = re.match(r"^(remove|suppress|unsubscribe)\s+(\S+@\S+)$", t)
     if rm:
         store.add_suppressed(rm.group(2).strip(".,;"))
@@ -143,36 +142,43 @@ def handle_text(text: str) -> str:
     return "I did not understand that. " + HELP
 
 
-def approve_sends(which: str) -> str:
+def mark_codes_sent(which: str) -> str:
     lst = store.latest_prospects()
     if not lst:
-        return "There is no radar list to send from yet."
+        return "There is no radar list yet."
     by_code = {p["code"].lower(): p for p in lst}
     if which.strip() in ("all", "everything", "them all"):
-        chosen = list(lst)
-        missing = []
+        codes = [p["code"].lower() for p in lst if p.get("can_email")]
     else:
-        codes = [c.lower() if c.lower().startswith("p") else "p" + c for c in re.findall(r"p?\d+", which)]
-        chosen = [by_code[c] for c in dict.fromkeys(codes) if c in by_code]
-        missing = [c.upper() for c in codes if c not in by_code]
-    queued, skipped = [], []
-    suppressed = set(store.suppressed())
-    for p in chosen:
-        if not p.get("can_email") or p.get("email", "") in suppressed:
-            skipped.append(f"{p['code']} (call or write, not emailed)")
-        elif p.get("status") in ("approved_to_send", "sent"):
-            skipped.append(f"{p['code']} (already {p['status'].replace('_', ' ')})")
-        else:
-            p["status"] = "approved_to_send"
-            p["approved_at"] = int(time.time())
-            store.put_prospect(p)
-            queued.append(f"{p['code']} {p['location_name']} to {p['email']}")
-    msg = ("Queued to send from your Gmail at the next 9am run:\n" + "\n".join(queued)) if queued else "Nothing new queued."
-    if skipped:
-        msg += "\n\nNot queued: " + ", ".join(skipped)
+        codes = [c if c.startswith("p") else "p" + c for c in re.findall(r"p?\d+", which)]
+    done, missing = [], []
+    for c in dict.fromkeys(codes):
+        p = by_code.get(c)
+        if not p:
+            missing.append(c.upper())
+            continue
+        p["status"] = "sent"
+        p["sent_at"] = int(time.time())
+        store.put_prospect(p)
+        done.append(f"{p['code']} {p['location_name']}")
+    msg = ("Recorded as sent:\n" + "\n".join(done)) if done else "Nothing recorded."
     if missing:
         msg += "\n\nNot on today's radar list: " + ", ".join(missing)
     return msg
+
+
+@app.get("/m/<pid>")
+def open_email(pid: str):
+    """One tap from Telegram: opens the drafted email in Yeukai's own mail app. He presses Send."""
+    from urllib.parse import quote
+
+    from flask import redirect
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("can_email") or p.get("email", "") in set(store.suppressed()):
+        abort(404)
+    url = f"mailto:{p['email']}?subject={quote(p['subject'])}&body={quote(p['body'])}"
+    return redirect(url, code=302)
 
 
 def _page_title(url: str) -> str:

@@ -151,18 +151,16 @@ assert m[2].startswith("P2. Elm Care") and "Call or write" in m[2], m[2]        
 assert not any("Good Place" in x or "GP Surgery" in x or "Old Report" in x for x in m)
 sent.clear(); prospects.run(web.store, web.telegram)
 assert "no new" in sent[0][1]                                                                 # not reported twice
-out = say("send all")[0]
-assert "P1 Oak House" in out and "P2 (call or write" in out, out
-assert "already approved to send" in say("send P1")[0]
-assert "Not on today's radar list: P9" in say("send 9")[0]
-q = c.get("/prospects", headers={"X-Key": "k"}).get_json()
-assert len(q) == 1 and q[0]["email"] == "info@oakhouse.test" and "remove" in q[0]["body"]
-assert c.get("/prospects").status_code == 403
-sent.clear(); c.post(f"/prospects/{q[0]['id']}/sent", headers={"X-Key": "k"}, json={"status": "sent"})
-assert any("Sent: P1" in s[1] for s in sent)
-assert c.get("/prospects", headers={"X-Key": "k"}).get_json() == []
+assert "/m/" in m[1] and "/m/" not in m[2]                                                   # open-email link only where allowed
+pid = m[1].split("/m/")[1].split()[0]
+r = c.get(f"/m/{pid}")
+assert r.status_code == 302 and r.headers["Location"].startswith("mailto:info@oakhouse.test?subject=Support") and "remove" in r.headers["Location"]
+out = say("sent P1")[0]
+assert "Recorded as sent" in out and "P1 Oak House" in out, out
+assert "Not on today's radar list: P9" in say("sent 9")[0]
 assert "sent" in say("leads")[0]
 c.post("/suppress", headers={"X-Key": "k"}, json={"emails": ["INFO@oakhouse.test"]})
 assert "info@oakhouse.test" in web.store.suppressed()
+assert c.get(f"/m/{pid}").status_code == 404                                                  # removed address can't be opened
 assert "will never be emailed" in say("remove hello@elm.test")[0]
 print("REPORT RADAR TESTS PASSED")
