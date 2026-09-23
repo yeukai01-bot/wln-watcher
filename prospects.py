@@ -158,25 +158,29 @@ def site_recent(period: str = "week") -> tuple[dict, dict]:
             if page > 1:
                 params += [("ajax", "0"), ("page", str(page))]
             try:
-                soup = BeautifulSoup(_site("/search/all?" + urlencode(params, quote_via=quote)), "html.parser")
+                html = _site("/search/all?" + urlencode(params, quote_via=quote))
             except Exception as exc:
                 stats[f"website search failed ({type(exc).__name__})"] = stats.get(f"website search failed ({type(exc).__name__})", 0) + 1
                 break
-            links = soup.select("h2.service-header__title a")
+            # Split the page at each result title; each chunk holds that result's name, type and overall rating.
+            parts = re.split(r'<h2[^>]*class="[^"]*service-header__title[^"]*"[^>]*>', html)
+            links = parts[1:]
             if page == 1 and not links and not stats.get("_seen_empty"):
                 stats["_seen_empty"] = 1
+                soup = BeautifulSoup(html, "html.parser")
                 title = (soup.title.get_text(strip=True) if soup.title else "no title")[:80]
                 found_txt = (re.search(r"We found[^.<]{0,80}|Sorry but there were no results", soup.get_text(" ")) or [""])[0]
                 stats[f"empty search page for {place}: '{title}' {found_txt}"] = 1
-            for a in links:
-                m = re.search(r"/location/(1-\d+)", a.get("href", ""))
+            for chunk in links:
+                m = re.search(r'href="\s*/location/(1-\d+)\s*"[^>]*>([^<]+)</a>', chunk)
                 if not m:
                     continue
-                card = a.find_parent("article") or a.find_parent("li") or a.parent.parent.parent.parent
-                text = " ".join(card.get_text(" ").split())
+                text = " ".join(re.sub(r"<[^>]+>", " ", chunk).split())
                 r = SITE_RATING_RX.search(text)
                 if r:
-                    found.setdefault(m.group(1), {"name": a.get_text(strip=True), "rating": r.group(1), "type": text.split(a.get_text(strip=True))[0].strip()})
+                    found.setdefault(m.group(1), {"name": " ".join(m.group(2).split()), "rating": r.group(1), "type": ""})
+                else:
+                    stats["search result without a readable rating"] = stats.get("search result without a readable rating", 0) + 1
             if len(links) < 10:
                 break
     return found, stats
@@ -269,7 +273,7 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:site2")
+    first = not store.has("radar:initialised:site3")
     period = "month" if first else "week"
     candidates, stats = site_recent(period)
     found = []
@@ -316,7 +320,7 @@ def run(store, telegram) -> None:
                 stats[why] = stats.get(why, 0) + 1
             elif p:
                 found.append(p)
-    store.add_many(["radar:initialised:site2"])
+    store.add_many(["radar:initialised:site3"])
     stats.pop("_seen_empty", None)
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     # Priority regions first, then Inadequate before Requires improvement.
