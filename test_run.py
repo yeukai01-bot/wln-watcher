@@ -163,4 +163,15 @@ c.post("/suppress", headers={"X-Key": "k"}, json={"emails": ["INFO@oakhouse.test
 assert "info@oakhouse.test" in web.store.suppressed()
 assert c.get(f"/m/{pid}").status_code == 404                                                  # removed address can't be opened
 assert "will never be emailed" in say("remove hello@elm.test")[0]
+assert "sam.ai import file" in m[0] and "/radar/" in m[0]
+link = m[0].split("/radar/")[1].split()[0]
+r = c.get("/radar/" + link)
+assert r.status_code == 200, r.status_code
+rows = r.get_data(as_text=True)
+assert rows.startswith("First Name,Last Name,Company,Email") and "Oak House" not in rows  # Oak House email now removed
+assert "Elm Care" not in rows                                                                   # both addresses removed above
+rows = web.prospects_csv([{"location_name": "Ash Lodge", "registered_manager": "Jo Bloggs", "report_date": "20 September 2026",
+                           "rating": "Requires improvement", "can_email": False, "email": "x@ash.test", "weak_key_questions": ["Safe: Requires improvement"]}])
+assert "Jo,Bloggs,Ash Lodge,," in rows and "2026-09-20" in rows and "Call or write" in rows and "CQC report radar" in rows, rows
+assert c.get("/radar/" + link.replace(link[-10:], "0000000000")).status_code == 404
 print("REPORT RADAR TESTS PASSED")

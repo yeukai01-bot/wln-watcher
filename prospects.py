@@ -226,17 +226,27 @@ def run(store, telegram) -> None:
         p["can_email"] = bool(p["email"] and p["companies_house"])
         p["subject"], p["body"] = draft_email(p)
         p["status"] = "drafted"
+        p["radar_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         p["code"] = f"P{n}"
         made.append(store.put_prospect(p))
         store.add_many([f"prospect:{p['location_id']}"])
 
     store.save_latest_prospects([m["id"] for m in made])
+    day = made[0]["radar_date"]
+    csv_link = ""
+    if os.getenv("APPROVALS_KEY"):
+        import hashlib
+        import hmac
+
+        tok = hmac.new(os.getenv("APPROVALS_KEY").encode(), f"radar:{day}".encode(), hashlib.sha256).hexdigest()[:24]
+        csv_link = f"{REPLIES_URL}/radar/{day}/{tok}.csv"
     telegram.send_message(
         f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report.\n\n"
         "Each draft follows below. Tap 'Open email' to open it in your mail app, already addressed and written; read it and press Send. "
         "Then reply e.g. 'sent P1 P3' so I keep track. "
         "Services without a company number or published email are marked 'call or write', because the law on "
         "unsolicited emails is stricter for sole traders and partnerships."
+        + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
     )
     for p in made:
         how = f"Email to: {p['email']}" if p["can_email"] else (

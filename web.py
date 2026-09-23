@@ -167,6 +167,56 @@ def mark_codes_sent(which: str) -> str:
     return msg
 
 
+SAM_COLUMNS = ["First Name", "Last Name", "Company", "Email", "Phone", "Website", "City", "Region", "Lead Source",
+               "CQC Rating", "Last Inspection Date", "KLOE Finding", "CQC Provider ID", "CQC Report URL", "Service Type",
+               "Company Number", "Contact Route", "Notes"]
+
+
+def radar_token(day: str) -> str:
+    import hashlib
+
+    return hmac.new(os.getenv("APPROVALS_KEY", "").encode(), f"radar:{day}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def prospects_csv(items: list[dict]) -> str:
+    import csv
+    import io
+    from datetime import datetime as _dt
+
+    suppressed = set(store.suppressed())
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(SAM_COLUMNS)
+    for p in items:
+        if p.get("email", "") in suppressed:
+            continue
+        first, _, last = (p.get("registered_manager") or "").partition(" ")
+        try:
+            iso = _dt.strptime(p.get("report_date", ""), "%d %B %Y").strftime("%Y-%m-%d")
+        except ValueError:
+            iso = ""
+        route = "Email allowed (limited company)" if p.get("can_email") else "Call or write"
+        notes = (f"CQC report radar {p.get('code', '')}. Registered manager: {p.get('registered_manager') or 'not listed'}. "
+                 f"Provider: {p.get('provider_name', '')}.\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
+        wr.writerow([first, last, p.get("location_name", ""), p.get("email", "") if p.get("can_email") else "",
+                     p.get("phone", ""), p.get("website", ""), p.get("town", ""), p.get("region", ""), "CQC report radar",
+                     p.get("rating", ""), iso, "; ".join(p.get("weak_key_questions") or []), p.get("provider_id", ""),
+                     p.get("cqc_page", ""), p.get("service_type", ""), p.get("companies_house", ""), route, notes])
+    return buf.getvalue()
+
+
+@app.get("/radar/<day>/<token>.csv")
+def radar_csv(day: str, token: str):
+    """Today's radar list as a CSV laid out for the sam.ai Import Wizard (Leads, folder CQC Report Radar)."""
+    from flask import Response
+
+    if not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, radar_token(day)):
+        abort(404)
+    items = [p for p in store.prospects() if p.get("radar_date") == day]
+    return Response(prospects_csv(items), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv"})
+
+
 @app.get("/m/<pid>")
 def open_email(pid: str):
     """One tap from Telegram: opens the drafted email in Yeukai's own mail app. He presses Send."""
