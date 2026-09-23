@@ -1,0 +1,66 @@
+# Render Blueprint for the Well-Led Network morning watcher and reply service.
+# Creates three things:
+#   1. wln-morning-watcher  (cron)  reads official sources each morning, sends topics and a draft to Telegram
+#   2. wln-replies          (web)   receives your Telegram replies and queues approved topics
+#   3. wln-watcher-memory   (key value) remembers what was reported and what you approved
+envVarGroups:
+  - name: wln-secrets
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false            # paste in Render: your Claude API key
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false            # paste in Render: from BotFather
+      - key: TELEGRAM_CHAT_ID
+        sync: false            # paste in Render: your chat id with the bot
+      - key: WEBHOOK_SECRET
+        generateValue: true    # Render makes a random value; nobody needs to type it
+      - key: APPROVALS_KEY
+        generateValue: true    # used by the Claude publishing task to read approvals
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-5
+
+services:
+  - type: cron
+    name: wln-morning-watcher
+    runtime: python
+    plan: starter
+    schedule: "0 5 * * *"      # 05:00 UTC = 06:00 UK summer time, 05:00 winter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - fromGroup: wln-secrets
+      - key: QUESTIONS_CSV_URL
+        sync: false            # optional: published CSV of group questions
+      - key: LOOKBACK_HOURS
+        value: "48"
+      - key: MAX_TOPICS
+        value: "5"
+      - key: MAX_DRAFTS
+        value: "1"
+      - key: MIN_SCORE
+        value: "12"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: wln-watcher-memory
+          property: connectionString
+
+  - type: web
+    name: wln-replies
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn web:app --workers 1 --threads 4 --timeout 600
+    envVars:
+      - fromGroup: wln-secrets
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: wln-watcher-memory
+          property: connectionString
+
+  - type: keyvalue
+    name: wln-watcher-memory
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
