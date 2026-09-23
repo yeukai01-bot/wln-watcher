@@ -130,6 +130,71 @@ def qualify(loc: dict, stats: dict | None = None) -> dict | None:
     }
 
 
+SITE = "https://www.cqc.org.uk"
+SEARCH_PLACES = [x.strip() for x in os.getenv("RADAR_SEARCH_PLACES", (
+    "London,Reading,Oxford,Southampton,Brighton,Guildford,Maidstone,Milton Keynes,Luton,Chelmsford,Ipswich,Norwich,"
+    "Cambridge,Peterborough,Northampton,Birmingham,Coventry,Leicester,Nottingham,Derby,Stoke-on-Trent,Lincoln,"
+    "Bristol,Gloucester,Swindon,Bournemouth,Exeter,Plymouth,Truro,Manchester,Liverpool,Preston,Leeds,Sheffield,"
+    "Hull,York,Middlesbrough,Newcastle upon Tyne,Carlisle,Shrewsbury,Worcester,Hereford")).split(",") if x.strip()]
+SITE_RATING_RX = re.compile(r"Overall:\s*(Inadequate|Requires improvement)")
+
+
+def _site(path: str, params: list | None = None) -> str:
+    r = requests.get(SITE + path, params=params, headers=sources.BROWSER_UA, timeout=40)
+    r.raise_for_status()
+    return r.text
+
+
+def site_recent(period: str = "week") -> tuple[dict, dict]:
+    """Services rated Inadequate or Requires improvement whose report the CQC website lists as published in the
+    last week (or month). The public API does not yet carry the new-style assessment ratings, the website does."""
+    found, stats = {}, {}
+    for place in SEARCH_PLACES:
+        for page in range(1, 11):
+            params = [("query", ""), ("location-query", place), ("radius", "25"), ("display", "list"), ("sort", "distance"),
+                      ("last-published", period), ("filters[]", "archived:active"), ("filters[]", "lastPublished:all"),
+                      ("filters[]", "more_services:all"), ("filters[]", "overallRating:Requires improvement"),
+                      ("filters[]", "overallRating:Inadequate"), ("filters[]", "services:all"), ("filters[]", "specialisms:all")]
+            if page > 1:
+                params += [("ajax", "0"), ("page", str(page))]
+            try:
+                soup = BeautifulSoup(_site("/search/all", params), "html.parser")
+            except Exception as exc:
+                stats[f"website search failed ({type(exc).__name__})"] = stats.get(f"website search failed ({type(exc).__name__})", 0) + 1
+                break
+            links = soup.select("h2.service-header__title a")
+            for a in links:
+                m = re.search(r"/location/(1-\d+)", a.get("href", ""))
+                if not m:
+                    continue
+                card = a.find_parent("article") or a.find_parent("li") or a.parent.parent.parent.parent
+                text = " ".join(card.get_text(" ").split())
+                r = SITE_RATING_RX.search(text)
+                if r:
+                    found.setdefault(m.group(1), {"name": a.get_text(strip=True), "rating": r.group(1), "type": text.split(a.get_text(strip=True))[0].strip()})
+            if len(links) < 10:
+                break
+    return found, stats
+
+
+def site_detail(lid: str) -> dict:
+    """Report publication date and the key questions rated below Good, from the service's CQC page."""
+    try:
+        text = BeautifulSoup(_site(f"/location/{lid}"), "html.parser").get_text("\n")
+    except Exception:
+        return {}
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    out = {"weak": []}
+    for i, l in enumerate(lines[:-1]):
+        if l == "Report published:" and "published" not in out:
+            out["published"] = lines[i + 1]
+        if l in ("Safe", "Effective", "Caring", "Responsive", "Well-led") and lines[i + 1] in TARGET_RATINGS:
+            item = f"{l}: {lines[i + 1]}"
+            if item not in out["weak"]:
+                out["weak"].append(item)
+    return out
+
+
 def find_email(website: str) -> str:
     """Look for a published contact email on the provider's own website (home and contact pages)."""
     if not website:
@@ -199,58 +264,63 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:v4")
-    ids = changed_location_ids(days=14 if first else 2)
-    found, stats = [], {}
+    first = not store.has("radar:initialised:site1")
+    period = "month" if first else "week"
+    candidates, stats = site_recent(period)
+    found = []
     todo = []
-    for lid in ids:
+    for lid, info in candidates.items():
         if store.has(f"prospect:{lid}"):
             stats["already sent to you"] = stats.get("already sent to you", 0) + 1
         else:
-            todo.append(lid)
+            todo.append((lid, info))
 
-    def fetch(lid):
+    def build(item):
+        lid, info = item
         try:
-            return _get(f"locations/{lid}"), None
+            loc = _get(f"locations/{lid}")
         except Exception as exc:
-            return None, type(exc).__name__
+            return None, f"could not read contact details ({type(exc).__name__})"
+        if (loc.get("type") or "").lower() not in SOCIAL_CARE_TYPES:
+            return None, "not adult social care"
+        if (loc.get("registrationStatus") or "").lower() != "registered":
+            return None, "not registered"
+        region = loc.get("region") or ""
+        if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
+            return None, "outside priority regions"
+        detail = site_detail(lid)
+        services = ", ".join(s.get("name", "") for s in (loc.get("gacServiceTypes") or []) if s.get("name")) or info.get("type", "")
+        return {
+            "location_id": lid, "location_name": loc.get("name") or info["name"], "provider_id": loc.get("providerId"),
+            "rating": info["rating"], "report_date": detail.get("published") or "recently",
+            "weak_key_questions": detail.get("weak", []), "service_type": services, "region": region,
+            "local_authority": loc.get("localAuthority") or "", "town": loc.get("postalAddressTownCity") or "",
+            "phone": loc.get("mainPhoneNumber") or "", "website": loc.get("website") or "",
+            "cqc_page": f"https://www.cqc.org.uk/location/{lid}",
+            "registered_manager": next(
+                (f"{c.get('personGivenName', '')} {c.get('personFamilyName', '')}".strip()
+                 for r in (loc.get("regulatedActivities") or []) for c in (r.get("contacts") or [])
+                 if "registered manager" in " ".join(c.get("personRoles") or []).lower()), ""),
+        }, None
 
     from concurrent.futures import ThreadPoolExecutor
 
-    with ThreadPoolExecutor(max_workers=6) as pool:  # a few at a time, polite to the CQC API
-        for loc, err in pool.map(fetch, todo):
-            if err:
-                stats[f"could not read ({err})"] = stats.get(f"could not read ({err})", 0) + 1
-                continue
-            p = qualify(loc, stats)
-            if p:
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for p, why in pool.map(build, todo):
+            if why:
+                stats[why] = stats.get(why, 0) + 1
+            elif p:
                 found.append(p)
-    store.add_many(["radar:initialised:v4"])
-    debug_ids = [x.strip() for x in os.getenv("RADAR_DEBUG_IDS", "1-10617152345,1-18069446399,1-10615519904,1-2185732024,1-124583595,1-2481243083").split(",") if x.strip()]
-    if debug_ids:
-        lines = []
-        for d in debug_ids:
-            try:
-                loc = _get(f"locations/{d}")
-                ov = ((loc.get("currentRatings") or {}).get("overall") or {})
-                lines.append(f"{d} {loc.get('name')}: in feed={d in ids}, type={loc.get('type')}, status={loc.get('registrationStatus')}, "
-                             f"rating={ov.get('rating')}, reportDate={ov.get('reportDate')}, "
-                             f"lastReport={(loc.get('lastReport') or {}).get('publicationDate')}, reports={[r.get('reportDate') for r in (loc.get('reports') or [])][:3]}")
-            except Exception as exc:
-                lines.append(f"{d}: could not read ({exc})"[:200])
-        telegram.send_message("Radar check on known recent reports:\n" + "\n".join(lines))
-    samples = stats.pop("_samples", [])
+    store.add_many(["radar:initialised:site1"])
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
-    if samples:
-        breakdown += "\n\nExamples of older reports:\n" + "\n".join(f"- {s}" for s in samples)
     # Priority regions first, then Inadequate before Requires improvement.
     found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
     found = found[:MAX_PROSPECTS]
 
     if not found:
-        telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports today "
-                              f"({len(ids)} CQC records checked"
-                              + (f" over the last 14 days" if first else "") + ").\n\nWhy they were ruled out:\n" + breakdown)
+        telegram.send_message(f"Report radar: no new Inadequate or Requires improvement adult social care reports "
+                              f"published in the last {period} ({len(candidates)} poor reports of any kind found on the CQC website)."
+                              + ("\n\nWhy they were ruled out:\n" + breakdown if breakdown else ""))
         return
 
     suppressed = set(store.suppressed())

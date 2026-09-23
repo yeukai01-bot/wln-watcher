@@ -137,6 +137,11 @@ def radar_get(path, params=None):
     if path.startswith("locations/"): return LOCS[path.split("/")[1]]
     if path.startswith("providers/"): return PROVS.get(path.split("/")[1], {})
 prospects._get = radar_get
+SITE_FOUND = {"1-A": {"name": "Oak House", "rating": "Inadequate", "type": "Care home"},
+              "1-B": {"name": "Elm Care", "rating": "Requires improvement", "type": "Homecare service"},
+              "1-D": {"name": "GP Surgery", "rating": "Inadequate", "type": "GP practice"}}
+prospects.site_recent = lambda period="week": (dict(SITE_FOUND), {})
+prospects.site_detail = lambda lid: {"published": "20 September 2026", "weak": ["Safe: Inadequate"]}
 os.environ["RADAR_DEBUG_IDS"] = " "
 prospects.find_email = lambda site: {"www.oakhouse.test": "info@oakhouse.test", "elm.test": "hello@elm.test"}.get(site, "")
 prospects.draft_email = lambda p: (f"Support after your report, {p['location_name']}", "Dear Ann,\nbody\nIf you would rather not hear from me again, just reply 'remove' and I will not contact you.")
@@ -149,7 +154,7 @@ m = [s[1] for s in sent if s[0] == "msg"]
 assert "2 services" in m[0], m[0]
 assert m[1].startswith("P1. Oak House") and "Email to: info@oakhouse.test" in m[1], m[1]     # South East + Inadequate first
 assert m[2].startswith("P2. Elm Care") and "Call or write" in m[2], m[2]                      # no company number
-assert not any("Good Place" in x or "GP Surgery" in x or "Old Report" in x for x in m)
+assert not any("GP Surgery" in x for x in m)                                                   # not adult social care
 sent.clear(); prospects.run(web.store, web.telegram)
 assert "no new" in sent[0][1]                                                                 # not reported twice
 assert "/m/" in m[1] and "/m/" not in m[2]                                                   # open-email link only where allowed
@@ -175,4 +180,24 @@ rows = web.prospects_csv([{"location_name": "Ash Lodge", "registered_manager": "
                            "rating": "Requires improvement", "can_email": False, "email": "x@ash.test", "weak_key_questions": ["Safe: Requires improvement"]}])
 assert "Jo,Bloggs,Ash Lodge,," in rows and "2026-09-20" in rows and "Call or write" in rows and "CQC report radar" in rows, rows
 assert c.get("/radar/" + link.replace(link[-10:], "0000000000")).status_code == 404
+# website parser on a page shaped like the CQC search results
+import importlib
+real = importlib.reload(prospects)
+CARD = lambda lid, name, kind, rating: (f'<article class="provider-services-list__list-item"><header class="service-header">'
+    f'<ul><li>{kind}</li></ul><div><div><h2 class="service-header__title"><a href=" /location/{lid} ">{name}</a> (2 miles away)</h2></div></div>'
+    f'<p>Overall: {rating}</p></header><p>Personal care 1 Jan 2020 Good</p></article>')
+PAGE1 = "<main><div class='search-results'>" + "".join(CARD(f"1-{i}", f"Home {i}", "Care home", "Requires improvement") for i in range(10)) + "</div></main>"
+PAGE2 = "<main><div class='search-results'>" + CARD("1-77", "Last Home", "Homecare service", "Inadequate") + CARD("1-88", "Fine", "Care home", "Good") + "</div></main>"
+calls = []
+def fake_site(path, params=None):
+    calls.append(dict(params or []).get("page", "1"))
+    if path.startswith("/location/"):
+        return "<main>Overview\nReport published:\n 3 September 2026 \nSafe \nInadequate\nCaring\nGood\nWell-led \nRequires improvement\n</main>"
+    return PAGE2 if dict(params).get("page") == "2" else PAGE1
+real._site = fake_site
+real.SEARCH_PLACES = ["London"]
+got, st = real.site_recent("week")
+assert len(got) == 11 and got["1-77"]["rating"] == "Inadequate" and "1-88" not in got, got
+d = real.site_detail("1-77")
+assert d["published"] == "3 September 2026" and d["weak"] == ["Safe: Inadequate", "Well-led: Requires improvement"], d
 print("REPORT RADAR TESTS PASSED")
