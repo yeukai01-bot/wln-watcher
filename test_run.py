@@ -137,6 +137,7 @@ def radar_get(path, params=None):
     if path.startswith("locations/"): return LOCS[path.split("/")[1]]
     if path.startswith("providers/"): return PROVS.get(path.split("/")[1], {})
 prospects._get = radar_get
+os.environ["RADAR_DEBUG_IDS"] = " "
 prospects.find_email = lambda site: {"www.oakhouse.test": "info@oakhouse.test", "elm.test": "hello@elm.test"}.get(site, "")
 prospects.draft_email = lambda p: (f"Support after your report, {p['location_name']}", "Dear Ann,\nbody\nIf you would rather not hear from me again, just reply 'remove' and I will not contact you.")
 os.environ.pop("CQC_API_KEY", None)

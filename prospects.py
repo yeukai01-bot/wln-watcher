@@ -199,7 +199,7 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:v3")
+    first = not store.has("radar:initialised:v4")
     ids = changed_location_ids(days=14 if first else 2)
     found, stats = [], {}
     todo = []
@@ -225,7 +225,20 @@ def run(store, telegram) -> None:
             p = qualify(loc, stats)
             if p:
                 found.append(p)
-    store.add_many(["radar:initialised:v3"])
+    store.add_many(["radar:initialised:v4"])
+    debug_ids = [x.strip() for x in os.getenv("RADAR_DEBUG_IDS", "1-10617152345,1-18069446399,1-10615519904,1-2185732024,1-124583595,1-2481243083").split(",") if x.strip()]
+    if debug_ids:
+        lines = []
+        for d in debug_ids:
+            try:
+                loc = _get(f"locations/{d}")
+                ov = ((loc.get("currentRatings") or {}).get("overall") or {})
+                lines.append(f"{d} {loc.get('name')}: in feed={d in ids}, type={loc.get('type')}, status={loc.get('registrationStatus')}, "
+                             f"rating={ov.get('rating')}, reportDate={ov.get('reportDate')}, "
+                             f"lastReport={(loc.get('lastReport') or {}).get('publicationDate')}, reports={[r.get('reportDate') for r in (loc.get('reports') or [])][:3]}")
+            except Exception as exc:
+                lines.append(f"{d}: could not read ({exc})"[:200])
+        telegram.send_message("Radar check on known recent reports:\n" + "\n".join(lines))
     samples = stats.pop("_samples", [])
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     if samples:
