@@ -161,6 +161,20 @@ def run_radar() -> None:
             pass
 
 
+def backlog_notice() -> None:
+    """If approved articles from earlier days are still unpublished (computer was off), say so."""
+    try:
+        today = datetime.now(UK).strftime("%Y-%m-%d")
+        waiting = [a for a in Store().approvals("approved") if a.get("date", today) < today]
+        if waiting:
+            telegram.send_message(
+                "Still waiting to be published from earlier days (the publishing run may have missed them):\n"
+                + "\n".join(f"- {a['headline']} (approved {a['date']})" for a in waiting)
+                + "\n\nThey stay in the queue and will go out at the next publishing run (11am or 3pm UK) that finds your computer on.")
+    except Exception as exc:
+        print("backlog notice failed:", exc)
+
+
 def main() -> None:
     rc = 0
     try:
@@ -174,6 +188,7 @@ def main() -> None:
         except Exception:
             pass
     run_radar()
+    backlog_notice()
     sys.exit(rc)
 
 
