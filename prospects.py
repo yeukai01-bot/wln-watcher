@@ -9,6 +9,7 @@ Data: the CQC public API (free key from the CQC Developer Portal, stored as CQC_
 from __future__ import annotations
 
 import os
+import time
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode, urljoin
@@ -210,6 +211,58 @@ def site_detail(lid: str) -> dict:
     return out
 
 
+CLEAROUT = "https://api.clearout.io/v2"
+
+
+def _clearout(path: str, body: dict) -> dict:
+    key = os.getenv("CLEAROUT_API_KEY", "")
+    if not key:
+        return {}
+    r = requests.post(f"{CLEAROUT}/{path}", json=body, timeout=70,
+                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    if r.status_code >= 400:
+        return {}
+    return r.json() or {}
+
+
+def clearout_find(name: str, domain: str) -> str:
+    """Clearout email finder (name + domain). Free when nothing is found; 4 credits per person found."""
+    if not (name and domain and os.getenv("CLEAROUT_API_KEY")):
+        return ""
+    try:
+        d = (_clearout("email_finder/instant", {"name": name, "domain": domain, "timeout": 60000, "queue": False}).get("data") or {})
+        emails = [e.get("email_address", "") for e in (d.get("emails") or []) if e.get("email_address")]
+        return emails[0].lower() if emails and int(d.get("confidence_score") or 0) >= 50 else ""
+    except Exception:
+        return ""
+    finally:
+        time.sleep(11)  # API limit is 6 finder requests a minute
+
+
+def clearout_verify(email: str) -> str:
+    """Returns 'safe', 'risky' (valid but unconfirmable or a shared inbox), 'invalid' or 'unchecked'."""
+    if not (email and os.getenv("CLEAROUT_API_KEY")):
+        return "unchecked"
+    try:
+        d = (_clearout("email_verify/instant", {"email": email, "timeout": 60000}).get("data") or {})
+        status, safe = (d.get("status") or "").lower(), (d.get("safe_to_send") or "").lower()
+        if status == "invalid":
+            return "invalid"
+        if safe == "yes":
+            return "safe"
+        if status in ("valid", "catch_all", "unknown"):
+            return "risky"
+        return "unchecked"
+    except Exception:
+        return "unchecked"
+    finally:
+        time.sleep(7)  # API limit is 10 verifications a minute
+
+
+def _domain(website: str) -> str:
+    return re.sub(r"^www\.", "", re.sub(r"^https?://", "", (website or "").strip().lower()).split("/")[0])
+
+
 def find_email(website: str) -> str:
     """Look for a published contact email on the provider's own website (home and contact pages)."""
     if not website:
@@ -370,7 +423,16 @@ def run(store, telegram) -> None:
             p["note"] = "Large organisation or council: lower priority, has its own quality team."
             p["large_org"] = True
         p["companies_house"] = prov.get("companiesHouseNumber", "")
-        p["email"] = find_email(p["website"] or prov.get("website", ""))
+        site = p["website"] or prov.get("website", "")
+        p["email"] = find_email(site)
+        p["email_source"] = "service website" if p["email"] else ""
+        if not p["email"] and p.get("registered_manager") and _domain(site):
+            p["email"] = clearout_find(p["registered_manager"], _domain(site))
+            p["email_source"] = "Clearout finder" if p["email"] else ""
+        p["email_check"] = clearout_verify(p["email"]) if p["email"] else ""
+        if p["email_check"] == "invalid":
+            p["note"] = (p.get("note", "") + f" Email {p['email']} failed the Clearout check and was dropped.").strip()
+            p["email"], p["email_source"] = "", ""
         if p["email"] and p["email"] in suppressed:
             p["email"] = ""
             p["note"] = "Previously asked not to be contacted."
@@ -402,7 +464,8 @@ def run(store, telegram) -> None:
         + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
     )
     for p in made:
-        how = f"Email to: {p['email']}" if p["can_email"] else (
+        check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
+        how = f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
             "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
         telegram.send_message(
             f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"

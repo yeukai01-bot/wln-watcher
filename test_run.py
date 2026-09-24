@@ -204,3 +204,27 @@ assert len(got) == 11 and got["1-77"]["rating"] == "Inadequate" and "1-88" not i
 d = real.site_detail("1-77")
 assert d["published"] == "3 September 2026" and d["weak"] == ["Safe: Inadequate", "Well-led: Requires improvement"], d
 print("REPORT RADAR TESTS PASSED")
+
+# ---------------- Clearout ----------------
+import prospects as pr
+pr.time.sleep = lambda s: None
+class J:
+    def __init__(s, d, code=200): s._d=d; s.status_code=code
+    def json(s): return s._d
+calls=[]
+def fake_post(url, json=None, headers=None, timeout=None):
+    calls.append((url, headers["Authorization"]))
+    if url.endswith("email_finder/instant"):
+        return J({"status": "success", "data": {"emails": [{"email_address": "Ann.Lee@oak.test"}], "confidence_score": 80}})
+    e = json["email"]
+    return J({"status": "success", "data": {"status": "invalid" if "bad" in e else "valid", "safe_to_send": "yes" if "ann" in e else "no"}})
+pr.requests.post = fake_post
+os.environ["CLEAROUT_API_KEY"] = "tok"
+assert pr.clearout_find("Ann Lee", "oak.test") == "ann.lee@oak.test"
+assert calls[0][1] == "Bearer tok"
+assert pr.clearout_verify("ann.lee@oak.test") == "safe"
+assert pr.clearout_verify("info@oak.test") == "risky"
+assert pr.clearout_verify("bad@oak.test") == "invalid"
+assert pr._domain("https://www.Oak.test/contact") == "oak.test"
+os.environ.pop("CLEAROUT_API_KEY")
+print("CLEAROUT TESTS PASSED")
