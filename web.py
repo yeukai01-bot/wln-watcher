@@ -191,6 +191,8 @@ def prospects_csv(items: list[dict]) -> str:
         if p.get("email", "") in suppressed:
             continue
         first, _, last = (p.get("registered_manager") or "").partition(" ")
+        if not first:  # sam.ai needs a name, and matches duplicates on it
+            first, last = "Manager", p.get("location_name", "")
         try:
             iso = _dt.strptime(p.get("report_date", ""), "%d %B %Y").strftime("%Y-%m-%d")
         except ValueError:
