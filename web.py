@@ -197,7 +197,7 @@ def prospects_csv(items: list[dict]) -> str:
             iso = ""
         route = "Email allowed (limited company)" if p.get("can_email") else "Call or write"
         notes = (f"CQC report radar {p.get('code', '')}. Registered manager: {p.get('registered_manager') or 'not listed'}. "
-                 f"Provider: {p.get('provider_name', '')}.\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
+                 f"Provider: {p.get('provider_name', '')}. {p.get('note', '')}\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
         wr.writerow([first, last, p.get("location_name", ""), p.get("email", "") if p.get("can_email") else "",
                      p.get("phone", ""), p.get("website", ""), p.get("town", ""), p.get("region", ""), "CQC report radar",
                      p.get("rating", ""), iso, "; ".join(p.get("weak_key_questions") or []), p.get("provider_id", ""),
@@ -214,7 +214,8 @@ def radar_csv(day: str, token: str):
         abort(404)
     items = [p for p in store.prospects() if p.get("radar_date") == day]
     return Response(prospects_csv(items), mimetype="text/csv",
-                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv"})
+                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv",
+                             "Access-Control-Allow-Origin": "https://go.sam.ai"})  # lets the sam.ai import page read it
 
 
 @app.get("/m/<pid>")

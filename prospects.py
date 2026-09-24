@@ -28,6 +28,11 @@ ONLY_PRIORITY = os.getenv("RADAR_ONLY_PRIORITY_REGIONS") == "1"
 SOCIAL_CARE_TYPES = {"social care org"}
 REPLIES_URL = os.getenv("REPLIES_URL", "https://wln-replies.onrender.com").rstrip("/")
 EMAIL_RX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+WRONG_INBOXES = {"research", "myresearch", "referrals", "referral", "careers", "career", "jobs", "recruitment", "hr",
+                 "marketing", "press", "media", "dpo", "privacy", "gdpr", "data", "accounts", "finance", "invoices",
+                 "payroll", "training", "webmaster", "support", "sales"}
+FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk", "yahoo.com", "yahoo.co.uk",
+             "live.co.uk", "icloud.com", "btinternet.com"}
 BAD_EMAIL_BITS = ("example.", "sentry", "wixpress", ".png", ".jpg", ".gif", ".webp", "domain.com", "yourname", "noreply", "no-reply")
 
 ARTICLES = {
@@ -225,6 +230,12 @@ def find_email(website: str) -> str:
         if found:
             break
     clean = [e.strip().strip(".").lower() for e in found if not any(b in e.lower() for b in BAD_EMAIL_BITS)]
+    # Only addresses that belong to this service: same domain as its website, or a free mailbox.
+    site_domain = re.sub(r"^www\.", "", re.sub(r"^https?://", "", base).split("/")[0].lower())
+    root = ".".join(site_domain.split(".")[-3:]) if site_domain.endswith(".uk") else ".".join(site_domain.split(".")[-2:])
+    clean = [e for e in clean
+             if e.split("@")[0] not in WRONG_INBOXES
+             and (e.split("@")[1].endswith(root) or e.split("@")[1] in FREE_MAIL)]
     if not clean:
         return ""
     preferred = [e for e in clean if e.split("@")[0] in ("info", "enquiries", "enquiry", "admin", "office", "hello", "contact", "manager")]
@@ -355,6 +366,9 @@ def run(store, telegram) -> None:
         except Exception:
             prov = {}
         p["provider_name"] = prov.get("name", "")
+        if "council" in p["provider_name"].lower() or len(prov.get("locationIds") or []) > 15:
+            p["note"] = "Large organisation or council: lower priority, has its own quality team."
+            p["large_org"] = True
         p["companies_house"] = prov.get("companiesHouseNumber", "")
         p["email"] = find_email(p["website"] or prov.get("website", ""))
         if p["email"] and p["email"] in suppressed:
@@ -395,6 +409,7 @@ def run(store, telegram) -> None:
             f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
             f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
             f"{how}\nCQC page: {p['cqc_page']}\n"
+            + (f"Note: {p['note']}\n" if p.get("note") else "")
             + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
             + "\n"
             f"Subject: {p['subject']}\n\n{p['body']}"
