@@ -136,7 +136,7 @@ SEARCH_PLACES = [x.strip() for x in os.getenv("RADAR_SEARCH_PLACES", (
     "Cambridge,Peterborough,Northampton,Birmingham,Coventry,Leicester,Nottingham,Derby,Stoke-on-Trent,Lincoln,"
     "Bristol,Gloucester,Swindon,Bournemouth,Exeter,Plymouth,Truro,Manchester,Liverpool,Preston,Leeds,Sheffield,"
     "Hull,York,Middlesbrough,Newcastle upon Tyne,Carlisle,Shrewsbury,Worcester,Hereford")).split(",") if x.strip()]
-SITE_RATING_RX = re.compile(r"Overall:\s*(Inadequate|Requires improvement)")
+SITE_RATING_RX = re.compile(r"Overall\s*:\s*(Inadequate|Requires improvement)")
 
 
 def _site(path: str, params: list | None = None) -> str:
@@ -189,18 +189,19 @@ def site_recent(period: str = "week") -> tuple[dict, dict]:
 def site_detail(lid: str) -> dict:
     """Report publication date and the key questions rated below Good, from the service's CQC page."""
     try:
-        text = BeautifulSoup(_site(f"/location/{lid}"), "html.parser").get_text("\n")
+        html = _site(f"/location/{lid}")
     except Exception:
         return {}
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    text = " ".join(re.sub(r"<[^>]+>", " ", html).split())
     out = {"weak": []}
-    for i, l in enumerate(lines[:-1]):
-        if l == "Report published:" and "published" not in out:
-            out["published"] = lines[i + 1]
-        if l in ("Safe", "Effective", "Caring", "Responsive", "Well-led") and lines[i + 1] in TARGET_RATINGS:
-            item = f"{l}: {lines[i + 1]}"
-            if item not in out["weak"]:
-                out["weak"].append(item)
+    m = re.search(r"Report published\s*:\s*(\d{1,2} [A-Z][a-z]+ \d{4})", text)
+    if m:
+        out["published"] = m.group(1)
+    seg = text[m.start():m.start() + 600] if m else text
+    for kq, rating in re.findall(r"\b(Safe|Effective|Caring|Responsive|Well-led)\s*:?\s*(Inadequate|Requires improvement|Good|Outstanding)", seg):
+        item = f"{kq}: {rating}"
+        if rating in TARGET_RATINGS and item not in out["weak"]:
+            out["weak"].append(item)
     return out
 
 
@@ -273,7 +274,7 @@ def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
-    first = not store.has("radar:initialised:site3")
+    first = not store.has("radar:initialised:site4")
     period = "month" if first else "week"
     candidates, stats = site_recent(period)
     found = []
@@ -320,7 +321,7 @@ def run(store, telegram) -> None:
                 stats[why] = stats.get(why, 0) + 1
             elif p:
                 found.append(p)
-    store.add_many(["radar:initialised:site3"])
+    store.add_many(["radar:initialised:site4"])
     stats.pop("_seen_empty", None)
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
     # Priority regions first, then Inadequate before Requires improvement.
