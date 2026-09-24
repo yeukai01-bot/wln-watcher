@@ -243,7 +243,10 @@ Rules:
   and the first 30 days, plus the free article and tool linked below.
 - Only use facts given to you (service name, rating, report date, key questions rated below Good). Do not
   criticise the service, CQC or anyone else. Do not say or imply CQC endorses Yeukai. Do not promise any outcome.
-- Acknowledge that a report like this is a hard week for the manager and team.
+- Acknowledge gently that a report like this is hard for the manager and team. Refer to the report by its date. Only say
+  "this week" or "last week" if the number of days since publication given to you makes that literally true.
+- Only use the facts about Yeukai listed above. Do not add any other claims (for example, do not say he has helped
+  other managers through reports like theirs, and do not invent results).
 - Address the registered manager by first name if one is given, otherwise "Dear [Service name] team".
 - Include this final line exactly: "If you would rather not hear from me again, just reply 'remove' and I will not contact you."
 - Sign off: Kind regards, Yeukai Kajidori, The Well-Led Network, welllednetwork.com, kajidoricollective@gmail.com
@@ -254,17 +257,27 @@ BODY:
 <email body>"""
 
 
+def _days_since(date_text: str) -> str:
+    try:
+        d = datetime.strptime(date_text, "%d %B %Y").replace(tzinfo=timezone.utc)
+        return str((datetime.now(timezone.utc) - d).days)
+    except (TypeError, ValueError):
+        return "unknown"
+
+
 def draft_email(p: dict) -> tuple[str, str]:
     title, url = ARTICLES.get(p["rating"], ARTICLES["Inadequate"])
     user = (
         f"Service: {p['location_name']} ({p['service_type']}), {p['town']}\n"
         f"Registered manager: {p['registered_manager'] or 'not listed'}\n"
-        f"Overall rating: {p['rating']}, report dated {p['report_date']}\n"
+        f"Overall rating: {p['rating']}, report published {p['report_date']}\n"
+        f"Today's date: {datetime.now(timezone.utc):%d %B %Y}. Days since the report was published: {_days_since(p['report_date'])}\n"
         f"Key questions rated below Good: {', '.join(p['weak_key_questions']) or 'not listed'}\n"
         f"Free article to link: {title} {url}\n"
         f"Free call link: https://tfft.io/CRIkyvF"
     )
     reply = ai._ask(EMAIL_SYSTEM, user, max_tokens=1200)
+    reply = re.sub(r"\s*[\u2013\u2014]\s*", ", ", reply).replace(" - ", ", ")  # no dashes as punctuation
     subj = re.search(r"SUBJECT:\s*(.+)", reply)
     body = reply.split("BODY:", 1)[-1].strip()
     return (subj.group(1).strip() if subj else f"Support after your recent CQC report, {p['location_name']}"), body
