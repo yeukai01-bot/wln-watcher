@@ -432,9 +432,12 @@ def run(store, telegram) -> None:
         site = p["website"] or prov.get("website", "")
         p["email"] = find_email(site)
         p["email_source"] = "service website" if p["email"] else ""
-        if not p["email"] and p.get("registered_manager") and _domain(site):
+        # No website on the CQC register is common for small homes: Clearout can resolve a company
+        # name to its domain when its Email Finder "Relax" domain setting is on.
+        lookup = _domain(site) or p["provider_name"] or ""
+        if not p["email"] and p.get("registered_manager") and lookup:
             co_stats["tried"] += 1
-            p["email"] = clearout_find(p["registered_manager"], _domain(site))
+            p["email"] = clearout_find(p["registered_manager"], lookup)
             p["email_source"] = "Clearout finder" if p["email"] else ""
             co_stats["found"] += bool(p["email"])
         elif not p["email"]:
@@ -472,7 +475,7 @@ def run(store, telegram) -> None:
         "Services without a company number or published email are marked 'call or write', because the law on "
         "unsolicited emails is stricter for sole traders and partnerships."
         + (f"\n\nEmail finder (Clearout): searched {co_stats['tried']}, found {co_stats['found']}; "
-           f"{co_stats['no_name_or_site']} had no manager name or website to search with."
+           f"{co_stats['no_name_or_site']} had no registered manager name to search with."
            + ("" if os.getenv("CLEAROUT_API_KEY") else " CLEAROUT_API_KEY is not set.") + (f" Last error: {CLEAROUT_LAST_ERROR[0]}" if CLEAROUT_LAST_ERROR[0] else ""))
         + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
         + ("\n\nPrinted letters: reply 'letters' to read today's letters, then 'post all' or 'post L1 L3' to have them printed and posted."
