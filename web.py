@@ -38,7 +38,12 @@ HELP = (
     "Tap Open email under a draft to open it in your mail app, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
     "leads shows today's radar list and what has been sent.\n"
-    "remove name@example.com stops the radar ever drafting to that address again."
+    "remove name@example.com stops the radar ever drafting to that address again.\n\n"
+    "Printed letters (7-day trial):\n"
+    "letters shows the letters waiting, each with a link to read it.\n"
+    "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
+    "skip L2 drops one for good.\n\n"
+    "published 3 <link> [short link] marks topic 3 as live if it was published by hand."
 )
 
 
@@ -94,6 +99,20 @@ def handle_text(text: str) -> str:
             return "No radar list yet."
         return "Today's radar list:\n" + "\n".join(
             f"{p['code']} {p['location_name']} ({p['rating']}): {p['status']}" + ("" if p.get("can_email") else ", call or write") for p in lst)
+    pub = re.match(r"^(published|live)\s+(\d+)\s+(https?://\S+)(?:\s+(\S+))?\s*$", text.strip(), re.I)
+    if pub:
+        return mark_published(int(pub.group(2)), pub.group(3), pub.group(4) or "")
+    if t in ("letters", "letter", "post", "/letters"):
+        import letters
+        return letters.list_letters(store, _base_url())
+    pl = re.match(r"^post\s+(.+)$", t)
+    if pl:
+        import letters
+        return letters.post(store, pl.group(1))
+    sk = re.match(r"^(skip|noletter)\s+(.+)$", t)
+    if sk:
+        import letters
+        return letters.skip(store, sk.group(2))
     s = re.match(r"^(sent|done|send)\s+(.+)$", t)
     if s:
         return mark_codes_sent(s.group(2))
@@ -140,6 +159,18 @@ def handle_text(text: str) -> str:
             msg += ("\n\n" if msg else "") + f"Not on {latest['date']}'s list: {', '.join(missing)}"
         return msg
     return "I did not understand that. " + HELP
+
+
+def mark_published(number: int, url: str, short: str) -> str:
+    """Records an approved topic as live when it was published by hand, so it leaves the queue."""
+    waiting = [a for a in store.approvals("approved") if a["number"] == number]
+    if not waiting:
+        return f"No approved topic {number} is waiting. Reply queue to see the list."
+    a = waiting[-1]  # most recent if two days share a number
+    a["status"], a["live_url"], a["short_url"] = "published", url, short
+    a["note"] = "Published"
+    store.put_approval(a)
+    return f"Marked as live: {a['headline']}\n{url}" + (f"\nShort link: {short}" if short else "")
 
 
 def mark_codes_sent(which: str) -> str:
@@ -218,6 +249,27 @@ def radar_csv(day: str, token: str):
     return Response(prospects_csv(items), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv",
                              "Access-Control-Allow-Origin": "https://go.sam.ai"})  # lets the sam.ai import page read it
+
+
+def _base_url() -> str:
+    return (os.getenv("REPLIES_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://wln-replies.onrender.com").rstrip("/")
+
+
+@app.get("/letter/<pid>/<token>")
+def letter_preview(pid: str, token: str):
+    """Shows Yeukai exactly what a printed letter will say, before he replies 'post'."""
+    import letters
+
+    p = store.get_prospect(pid)
+    if not p or not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, letters.preview_token(pid)):
+        abort(404)
+    letters.ensure_address(p)
+    a = letters.address_for(p)
+    addr = "<br>".join(__import__("html").escape(x) for x in [a["name"], *a["line"].split(", "), a["postcode"]])
+    return (f"<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Letter preview</title></head>"
+            f"<body style='background:#eee;margin:0;padding:16px'><div style='background:#fff;max-width:640px;margin:auto;padding:32px;box-shadow:0 1px 4px #0003'>"
+            f"<p style='font-family:sans-serif;font-size:10pt;color:#666'>Address (printed by Intelliprint in the envelope window):<br>{addr}</p><hr>"
+            f"{letters.letter_html(p)}</div></body></html>")
 
 
 @app.get("/m/<pid>")

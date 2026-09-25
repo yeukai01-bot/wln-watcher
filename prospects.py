@@ -212,6 +212,7 @@ def site_detail(lid: str) -> dict:
 
 
 CLEAROUT = "https://api.clearout.io/v2"
+CLEAROUT_LAST_ERROR = [""]
 
 
 def _clearout(path: str, body: dict) -> dict:
@@ -221,8 +222,12 @@ def _clearout(path: str, body: dict) -> dict:
     r = requests.post(f"{CLEAROUT}/{path}", json=body, timeout=70,
                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     if r.status_code >= 400:
+        CLEAROUT_LAST_ERROR[0] = f"{path} HTTP {r.status_code}: {r.text[:150]}"
+        print("clearout error:", CLEAROUT_LAST_ERROR[0])
         return {}
-    return r.json() or {}
+    out = r.json() or {}
+    print("clearout", path, "status", out.get("status"), "found" if (out.get("data") or {}).get("emails") else "")
+    return out
 
 
 def clearout_find(name: str, domain: str) -> str:
@@ -413,6 +418,7 @@ def run(store, telegram) -> None:
 
     suppressed = set(store.suppressed())
     made = []
+    co_stats = {"tried": 0, "found": 0, "no_name_or_site": 0}
     for n, p in enumerate(found, 1):
         try:
             prov = _get(f"providers/{p['provider_id']}")
@@ -427,8 +433,12 @@ def run(store, telegram) -> None:
         p["email"] = find_email(site)
         p["email_source"] = "service website" if p["email"] else ""
         if not p["email"] and p.get("registered_manager") and _domain(site):
+            co_stats["tried"] += 1
             p["email"] = clearout_find(p["registered_manager"], _domain(site))
             p["email_source"] = "Clearout finder" if p["email"] else ""
+            co_stats["found"] += bool(p["email"])
+        elif not p["email"]:
+            co_stats["no_name_or_site"] += 1
         p["email_check"] = clearout_verify(p["email"]) if p["email"] else ""
         if p["email_check"] == "invalid":
             p["note"] = (p.get("note", "") + f" Email {p['email']} failed the Clearout check and was dropped.").strip()
@@ -461,7 +471,12 @@ def run(store, telegram) -> None:
         "Then reply e.g. 'sent P1 P3' so I keep track. "
         "Services without a company number or published email are marked 'call or write', because the law on "
         "unsolicited emails is stricter for sole traders and partnerships."
+        + (f"\n\nEmail finder (Clearout): searched {co_stats['tried']}, found {co_stats['found']}; "
+           f"{co_stats['no_name_or_site']} had no manager name or website to search with."
+           + ("" if os.getenv("CLEAROUT_API_KEY") else " CLEAROUT_API_KEY is not set.") + (f" Last error: {CLEAROUT_LAST_ERROR[0]}" if CLEAROUT_LAST_ERROR[0] else ""))
         + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
+        + ("\n\nPrinted letters: reply 'letters' to read today's letters, then 'post all' or 'post L1 L3' to have them printed and posted."
+           if os.getenv("INTELLIPRINT_API_KEY") else "")
     )
     for p in made:
         check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
