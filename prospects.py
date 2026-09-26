@@ -288,6 +288,8 @@ def find_email(website: str) -> str:
         if found:
             break
     clean = [e.strip().strip(".").lower() for e in found if not any(b in e.lower() for b in BAD_EMAIL_BITS)]
+    # Drop empty or malformed mailto links (e.g. "mailto:" with no address), which crashed the radar on 26 Sept.
+    clean = [e for e in clean if EMAIL_RX.fullmatch(e)]
     # Only addresses that belong to this service: same domain as its website, or a free mailbox.
     site_domain = re.sub(r"^www\.", "", re.sub(r"^https?://", "", base).split("/")[0].lower())
     root = ".".join(site_domain.split(".")[-3:]) if site_domain.endswith(".uk") else ".".join(site_domain.split(".")[-2:])
@@ -430,7 +432,11 @@ def run(store, telegram) -> None:
             p["large_org"] = True
         p["companies_house"] = prov.get("companiesHouseNumber", "")
         site = p["website"] or prov.get("website", "")
-        p["email"] = find_email(site)
+        try:
+            p["email"] = find_email(site)
+        except Exception as exc:  # one odd website must never stop the whole radar
+            print(f"find_email failed for {site}: {exc}")
+            p["email"] = ""
         p["email_source"] = "service website" if p["email"] else ""
         # No website on the CQC register is common for small homes: Clearout can resolve a company
         # name to its domain when its Email Finder "Relax" domain setting is on.
