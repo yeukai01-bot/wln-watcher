@@ -269,3 +269,12 @@ assert [o["n"] for o in order] == [3, 2, 1, 4], order
 import sendspark
 assert not sendspark.enabled() and sendspark._find_link({"data": {"video": {"shareUrl": "https://sendspark.com/share/x"}}}) == "https://sendspark.com/share/x"
 print("REPORT REVIEW TESTS PASSED")
+
+# on-demand review command
+import prospects as _p
+calls_rv = []
+_p.review_one = lambda lid, st, tg: calls_rv.append(lid)
+out = say("review https://www.cqc.org.uk/location/1-20243112295")[0]
+import time as _t; _t.sleep(0.2)
+assert "Working on a free Report Review" in out and calls_rv == ["1-20243112295"], (out, calls_rv)
+print("REVIEW COMMAND TEST PASSED")

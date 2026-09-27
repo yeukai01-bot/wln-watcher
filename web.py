@@ -38,7 +38,8 @@ HELP = (
     "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
     "leads shows today's radar list and what has been sent.\n"
-    "remove name@example.com stops the radar ever drafting to that address again.\n\n"
+    "remove name@example.com stops the radar ever drafting to that address again.\n"
+    "review <CQC link> writes a free Report Review, email and video for any service, e.g. review https://www.cqc.org.uk/location/1-123456789\n\n"
     "Printed letters (7-day trial):\n"
     "letters shows the letters waiting, each with a link to read it.\n"
     "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
@@ -120,6 +121,13 @@ def handle_text(text: str) -> str:
     if rm:
         store.add_suppressed(rm.group(2).strip(".,;"))
         return f"Done. {rm.group(2)} will never be emailed by the radar."
+    rv = re.match(r"^review\s+.*?(1-\d{5,})", t)
+    if rv:
+        import prospects
+
+        threading.Thread(target=prospects.review_one, args=(rv.group(1), store, telegram), daemon=True).start()
+        return (f"Working on a free Report Review for CQC location {rv.group(1)}. It takes a few minutes, "
+                "longer if a personal video is being made. I will send it here.")
     w = re.match(r"^(write|draft|article)\s+(https?://\S+)\s*(.*)$", text.strip(), re.I | re.S)
     if w:
         url = w.group(2).rstrip(".,;:!?)]}'\"")

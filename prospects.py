@@ -201,6 +201,9 @@ def site_detail(lid: str) -> dict:
         return {}
     text = " ".join(re.sub(r"<[^>]+>", " ", html).split())
     out = {"weak": []}
+    ov = re.search(r"Overall\s*:?\s*(Inadequate|Requires improvement|Good|Outstanding)", text)
+    if ov:
+        out["overall"] = ov.group(1)
     m = re.search(r"Report published\s*:\s*(\d{1,2} [A-Z][a-z]+ \d{4})", text)
     if m:
         out["published"] = m.group(1)
@@ -358,6 +361,85 @@ def _priority(p: dict) -> tuple:
             (p.get("region") or "").lower() not in PRIORITY_REGIONS, p.get("rating") != "Inadequate")
 
 
+def build(item):
+    """Contact and provider details for one CQC location, or (None, reason) if it does not qualify."""
+    lid, info = item
+    try:
+        loc = _get(f"locations/{lid}")
+    except Exception as exc:
+        return None, f"could not read contact details ({type(exc).__name__})"
+    if (loc.get("type") or "").lower() not in SOCIAL_CARE_TYPES:
+        return None, "not adult social care"
+    if (loc.get("registrationStatus") or "").lower() != "registered":
+        return None, "not registered"
+    region = loc.get("region") or ""
+    if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
+        return None, "outside priority regions"
+    detail = site_detail(lid)
+    try:
+        prov = _get(f"providers/{loc.get('providerId')}") or {}
+    except Exception:
+        prov = {}
+    n_sites = len(prov.get("locationIds") or [])
+    services = ", ".join(s.get("name", "") for s in (loc.get("gacServiceTypes") or []) if s.get("name")) or info.get("type", "")
+    return {
+        "location_id": lid, "location_name": loc.get("name") or info["name"], "provider_id": loc.get("providerId"),
+        "rating": info["rating"], "report_date": detail.get("published") or "recently",
+        "weak_key_questions": detail.get("weak", []), "service_type": services, "region": region,
+        "local_authority": loc.get("localAuthority") or "", "town": loc.get("postalAddressTownCity") or "",
+        "phone": loc.get("mainPhoneNumber") or "", "website": loc.get("website") or "",
+        "cqc_page": f"https://www.cqc.org.uk/location/{lid}",
+        "registered_manager": next(
+            (f"{c.get('personGivenName', '')} {c.get('personFamilyName', '')}".strip()
+             for r in (loc.get("regulatedActivities") or []) for c in (r.get("contacts") or [])
+             if "registered manager" in " ".join(c.get("personRoles") or []).lower()), ""),
+        "provider_name": prov.get("name", ""), "companies_house": prov.get("companiesHouseNumber", ""),
+        "provider_website": prov.get("website", ""), "single_site": n_sites == 1, "sites": n_sites,
+        "large_org": "council" in (prov.get("name", "") or "").lower() or n_sites > 15,
+    }, None
+
+
+
+def prepare(p: dict, n: int, store, suppressed: set, co_stats: dict) -> dict:
+    """Find the email, check it, queue the video and write the Report Review and email for one prospect."""
+    if p.get("large_org"):
+        p["note"] = "Large organisation or council: lower priority, has its own quality team."
+    site = p["website"] or p.get("provider_website", "")
+    try:
+        p["email"] = find_email(site)
+    except Exception as exc:  # one odd website must never stop the whole radar
+        print(f"find_email failed for {site}: {exc}")
+        p["email"] = ""
+    p["email_source"] = "service website" if p["email"] else ""
+    # No website on the CQC register is common for small homes: Clearout can resolve a company
+    # name to its domain when its Email Finder "Relax" domain setting is on.
+    lookup = _domain(site) or p["provider_name"] or ""
+    if not p["email"] and p.get("registered_manager") and lookup:
+        co_stats["tried"] += 1
+        p["email"] = clearout_find(p["registered_manager"], lookup)
+        p["email_source"] = "Clearout finder" if p["email"] else ""
+        co_stats["found"] += bool(p["email"])
+    elif not p["email"]:
+        co_stats["no_name_or_site"] += 1
+    p["email_check"] = clearout_verify(p["email"]) if p["email"] else ""
+    if p["email_check"] == "invalid":
+        p["note"] = (p.get("note", "") + f" Email {p['email']} failed the Clearout check and was dropped.").strip()
+        p["email"], p["email_source"] = "", ""
+    if p["email"] and p["email"] in suppressed:
+        p["email"] = ""
+        p["note"] = "Previously asked not to be contacted."
+    # UK PECR: unsolicited marketing email is fine to companies (corporate subscribers) but not to
+    # sole traders or partnerships without consent. No company number: call or write instead.
+    p["can_email"] = bool(p["email"] and p["companies_house"])
+    p["video_queued"] = bool(p["can_email"] and sendspark.add(p))
+    p["subject"], p["body"] = draft_email(p)
+    p["status"] = "drafted"
+    p["radar_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    p["code"] = f"P{n}"
+    store.add_many([f"prospect:{p['location_id']}"])
+    return store.put_prospect(p)
+
+
 def run(store, telegram) -> None:
     if not os.getenv("CQC_API_KEY"):
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
@@ -372,42 +454,6 @@ def run(store, telegram) -> None:
             stats["already sent to you"] = stats.get("already sent to you", 0) + 1
         else:
             todo.append((lid, info))
-
-    def build(item):
-        lid, info = item
-        try:
-            loc = _get(f"locations/{lid}")
-        except Exception as exc:
-            return None, f"could not read contact details ({type(exc).__name__})"
-        if (loc.get("type") or "").lower() not in SOCIAL_CARE_TYPES:
-            return None, "not adult social care"
-        if (loc.get("registrationStatus") or "").lower() != "registered":
-            return None, "not registered"
-        region = loc.get("region") or ""
-        if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
-            return None, "outside priority regions"
-        detail = site_detail(lid)
-        try:
-            prov = _get(f"providers/{loc.get('providerId')}") or {}
-        except Exception:
-            prov = {}
-        n_sites = len(prov.get("locationIds") or [])
-        services = ", ".join(s.get("name", "") for s in (loc.get("gacServiceTypes") or []) if s.get("name")) or info.get("type", "")
-        return {
-            "location_id": lid, "location_name": loc.get("name") or info["name"], "provider_id": loc.get("providerId"),
-            "rating": info["rating"], "report_date": detail.get("published") or "recently",
-            "weak_key_questions": detail.get("weak", []), "service_type": services, "region": region,
-            "local_authority": loc.get("localAuthority") or "", "town": loc.get("postalAddressTownCity") or "",
-            "phone": loc.get("mainPhoneNumber") or "", "website": loc.get("website") or "",
-            "cqc_page": f"https://www.cqc.org.uk/location/{lid}",
-            "registered_manager": next(
-                (f"{c.get('personGivenName', '')} {c.get('personFamilyName', '')}".strip()
-                 for r in (loc.get("regulatedActivities") or []) for c in (r.get("contacts") or [])
-                 if "registered manager" in " ".join(c.get("personRoles") or []).lower()), ""),
-            "provider_name": prov.get("name", ""), "companies_house": prov.get("companiesHouseNumber", ""),
-            "provider_website": prov.get("website", ""), "single_site": n_sites == 1, "sites": n_sites,
-            "large_org": "council" in (prov.get("name", "") or "").lower() or n_sites > 15,
-        }, None
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -433,42 +479,7 @@ def run(store, telegram) -> None:
     made = []
     co_stats = {"tried": 0, "found": 0, "no_name_or_site": 0}
     for n, p in enumerate(found, 1):
-        if p.get("large_org"):
-            p["note"] = "Large organisation or council: lower priority, has its own quality team."
-        site = p["website"] or p.get("provider_website", "")
-        try:
-            p["email"] = find_email(site)
-        except Exception as exc:  # one odd website must never stop the whole radar
-            print(f"find_email failed for {site}: {exc}")
-            p["email"] = ""
-        p["email_source"] = "service website" if p["email"] else ""
-        # No website on the CQC register is common for small homes: Clearout can resolve a company
-        # name to its domain when its Email Finder "Relax" domain setting is on.
-        lookup = _domain(site) or p["provider_name"] or ""
-        if not p["email"] and p.get("registered_manager") and lookup:
-            co_stats["tried"] += 1
-            p["email"] = clearout_find(p["registered_manager"], lookup)
-            p["email_source"] = "Clearout finder" if p["email"] else ""
-            co_stats["found"] += bool(p["email"])
-        elif not p["email"]:
-            co_stats["no_name_or_site"] += 1
-        p["email_check"] = clearout_verify(p["email"]) if p["email"] else ""
-        if p["email_check"] == "invalid":
-            p["note"] = (p.get("note", "") + f" Email {p['email']} failed the Clearout check and was dropped.").strip()
-            p["email"], p["email_source"] = "", ""
-        if p["email"] and p["email"] in suppressed:
-            p["email"] = ""
-            p["note"] = "Previously asked not to be contacted."
-        # UK PECR: unsolicited marketing email is fine to companies (corporate subscribers) but not to
-        # sole traders or partnerships without consent. No company number: call or write instead.
-        p["can_email"] = bool(p["email"] and p["companies_house"])
-        p["video_queued"] = bool(p["can_email"] and sendspark.add(p))
-        p["subject"], p["body"] = draft_email(p)
-        p["status"] = "drafted"
-        p["radar_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        p["code"] = f"P{n}"
-        made.append(store.put_prospect(p))
-        store.add_many([f"prospect:{p['location_id']}"])
+        made.append(prepare(p, n, store, suppressed, co_stats))
 
     # Personal videos take a few minutes to render; add each link to its email once ready.
     queued = [m for m in made if m.get("video_queued")]
@@ -508,18 +519,46 @@ def run(store, telegram) -> None:
            if os.getenv("INTELLIPRINT_API_KEY") else "")
     )
     for p in made:
-        check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
-        how = f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
-            "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
-        telegram.send_message(
-            f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
-            f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
-            f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
-            f"{'Single site service. ' if p.get('single_site') else ''}{how}\nCQC page: {p['cqc_page']}\n"
-            + (f"Review (read this first): {p['review_url']}\n" if p.get("review_url") else "")
-            + (f"Video: {p['video_url']}\n" if p.get("video_url") else "")
-            + (f"Note: {p['note']}\n" if p.get("note") else "")
-            + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
-            + "\n"
-            f"Subject: {p['subject']}\n\n{p['body']}"
-        )
+        telegram.send_message(prospect_message(p))
+
+
+def prospect_message(p: dict) -> str:
+    check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
+    how = f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
+        "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
+    return (
+        f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
+        f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
+        f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
+        f"{'Single site service. ' if p.get('single_site') else ''}{how}\nCQC page: {p['cqc_page']}\n"
+        + (f"Review (read this first): {p['review_url']}\n" if p.get("review_url") else "")
+        + (f"Video: {p['video_url']}\n" if p.get("video_url") else "")
+        + (f"Note: {p['note']}\n" if p.get("note") else "")
+        + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
+        + "\n"
+        f"Subject: {p['subject']}\n\n{p['body']}"
+    )
+
+
+def review_one(lid: str, store, telegram) -> None:
+    """On request from Telegram ('review <CQC link>'): full Report Review, email and video for one service,
+    even if the radar has already reported it."""
+    if not os.getenv("CQC_API_KEY"):
+        telegram.send_message("Add CQC_API_KEY in Render first.")
+        return
+    detail = site_detail(lid)
+    p, why = build((lid, {"name": "", "rating": detail.get("overall", "")}))
+    if not p:
+        telegram.send_message(f"Could not review {lid}: {why}.")
+        return
+    p["rating"] = p["rating"] or detail.get("overall") or "not rated"
+    p = prepare(p, 0, store, set(store.suppressed()), {"tried": 0, "found": 0, "no_name_or_site": 0})
+    p["code"] = "R-" + p["id"][:4]
+    if p.get("video_queued"):
+        import review
+
+        got = sendspark.wait_for_links([p["email"]]).get(p["email"])
+        p["video_url"] = got or f"{REPLIES_URL}/v/{p['id']}"
+        p["body"] = review.email_body(p, p["review"], p["review_url"], p["video_url"])
+    store.put_prospect(p)
+    telegram.send_message("Report Review on request:\n\n" + prospect_message(p))
