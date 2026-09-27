@@ -35,7 +35,7 @@ HELP = (
     "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
     "Approved topics are written, checked and published at the next publishing run, and you get the live link here.\n\n"
     "Report radar (CQC outreach):\n"
-    "Tap Open email under a draft to open it in your mail app, ready to send. You press Send.\n"
+    "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
     "leads shows today's radar list and what has been sent.\n"
     "remove name@example.com stops the radar ever drafting to that address again.\n\n"
@@ -230,7 +230,10 @@ def prospects_csv(items: list[dict]) -> str:
             iso = ""
         route = "Email allowed (limited company)" if p.get("can_email") else "Call or write"
         notes = (f"CQC report radar {p.get('code', '')}. Registered manager: {p.get('registered_manager') or 'not listed'}. "
-                 f"Provider: {p.get('provider_name', '')}. {p.get('note', '')}\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
+                 f"Provider: {p.get('provider_name', '')}. {'Single site service. ' if p.get('single_site') else ''}{p.get('note', '')}"
+                 + (f"\nReview: {p['review_url']}" if p.get("review_url") else "")
+                 + (f"\nVideo: {p['video_url']}" if p.get("video_url") else "")
+                 + "\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
         wr.writerow([first, last, p.get("location_name", ""), p.get("email", "") if p.get("can_email") else "",
                      p.get("phone", ""), p.get("website", ""), p.get("town", ""), p.get("region", ""), "CQC report radar",
                      p.get("rating", ""), iso, "; ".join(p.get("weak_key_questions") or []), p.get("provider_id", ""),
@@ -274,16 +277,63 @@ def letter_preview(pid: str, token: str):
 
 @app.get("/m/<pid>")
 def open_email(pid: str):
-    """One tap from Telegram: opens the drafted email in Yeukai's own mail app. He presses Send."""
-    from urllib.parse import quote
+    """One tap from Telegram: opens the drafted email ready to send. Yeukai presses Send.
+    Gmail compose is used by default because the review makes the email longer than many mail apps
+    accept through a mailto link. Set GMAIL_ACCOUNT to "" in Render to go back to mailto."""
+    from urllib.parse import quote, urlencode
 
     from flask import redirect
 
     p = store.get_prospect(pid)
     if not p or not p.get("can_email") or p.get("email", "") in set(store.suppressed()):
         abort(404)
+    account = os.getenv("GMAIL_ACCOUNT", "kajidoricollective@gmail.com")
+    if account:
+        q = urlencode({"authuser": account, "view": "cm", "fs": "1", "to": p["email"], "su": p["subject"], "body": p["body"]}, quote_via=quote)
+        return redirect(f"https://mail.google.com/mail/?{q}", code=302)
     url = f"mailto:{p['email']}?subject={quote(p['subject'])}&body={quote(p['body'])}"
     return redirect(url, code=302)
+
+
+@app.get("/r/<pid>/<token>")
+def review_page(pid: str, token: str):
+    """The free one page Report Review, as sent to the service. Printable."""
+    import review
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("review") or not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, review.token(pid)):
+        abort(404)
+    return review.page_html(p)
+
+
+@app.get("/v/<pid>")
+def video(pid: str):
+    """Personal video link used in an email when Sendspark had not finished rendering by send time."""
+    from flask import redirect
+
+    import sendspark
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("video_queued"):
+        abort(404)
+    got = sendspark.link(p.get("email", ""))
+    if got:
+        return redirect(got, code=302)
+    return ("<p style='font-family:sans-serif;max-width:520px;margin:40px auto'>Your video is still being prepared. "
+            "Please try again in a few minutes.</p>"), 200
+
+
+@app.get("/radar/latest.csv")
+def radar_latest_csv():
+    """Newest radar day as a sam.ai import file, for the scheduled import task (needs the X-Key header)."""
+    from flask import Response
+
+    if not _key_ok():
+        abort(403)
+    items = store.latest_prospects()
+    day = items[0].get("radar_date", "latest") if items else "latest"
+    return Response(prospects_csv(items), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv"})
 
 
 def _page_title(url: str) -> str:

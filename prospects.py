@@ -18,6 +18,7 @@ import requests
 from bs4 import BeautifulSoup
 
 import ai
+import sendspark
 import sources
 
 API = "https://api.service.cqc.org.uk/public/v1"
@@ -337,21 +338,24 @@ def _days_since(date_text: str) -> str:
 
 
 def draft_email(p: dict) -> tuple[str, str]:
-    title, url = ARTICLES.get(p["rating"], ARTICLES["Inadequate"])
-    user = (
-        f"Service: {p['location_name']} ({p['service_type']}), {p['town']}\n"
-        f"Registered manager: {p['registered_manager'] or 'not listed'}\n"
-        f"Overall rating: {p['rating']}, report published {p['report_date']}\n"
-        f"Today's date: {datetime.now(timezone.utc):%d %B %Y}. Days since the report was published: {_days_since(p['report_date'])}\n"
-        f"Key questions rated below Good: {', '.join(p['weak_key_questions']) or 'not listed'}\n"
-        f"Free article to link: {title} {url}\n"
-        f"Free call link: https://tfft.io/CRIkyvF"
-    )
-    reply = ai._ask(EMAIL_SYSTEM, user, max_tokens=1200)
-    reply = re.sub(r"\s*[\u2013\u2014]\s*", ", ", reply).replace(" - ", ", ")  # no dashes as punctuation
-    subj = re.search(r"SUBJECT:\s*(.+)", reply)
-    body = reply.split("BODY:", 1)[-1].strip()
-    return (subj.group(1).strip() if subj else f"Support after your recent CQC report, {p['location_name']}"), body
+    """Read the published report, write the free one page Report Review, and build the email around it."""
+    import review
+    import uuid
+
+    p.setdefault("id", uuid.uuid4().hex[:10])
+    text = review.report_text(_site, p["location_id"], p.get("weak_key_questions") or [])
+    rv = review.write_review(p, text)
+    p["review"] = rv
+    p["review_url"] = review.review_url(REPLIES_URL, p["id"])
+    return rv["subject"], review.email_body(p, rv, p["review_url"], p.get("video_url", ""))
+
+
+def _priority(p: dict) -> tuple:
+    """Order of the morning list: single site owner-managed services first, then services where Well-led is
+    below Good (exactly what the 90-Day Reset fixes), then priority regions, then Inadequate before RI."""
+    wellled = any(k.lower().startswith("well-led") for k in p.get("weak_key_questions") or [])
+    return (bool(p.get("large_org")), not p.get("single_site"), not wellled,
+            (p.get("region") or "").lower() not in PRIORITY_REGIONS, p.get("rating") != "Inadequate")
 
 
 def run(store, telegram) -> None:
@@ -383,6 +387,11 @@ def run(store, telegram) -> None:
         if ONLY_PRIORITY and region.lower() not in PRIORITY_REGIONS:
             return None, "outside priority regions"
         detail = site_detail(lid)
+        try:
+            prov = _get(f"providers/{loc.get('providerId')}") or {}
+        except Exception:
+            prov = {}
+        n_sites = len(prov.get("locationIds") or [])
         services = ", ".join(s.get("name", "") for s in (loc.get("gacServiceTypes") or []) if s.get("name")) or info.get("type", "")
         return {
             "location_id": lid, "location_name": loc.get("name") or info["name"], "provider_id": loc.get("providerId"),
@@ -395,6 +404,9 @@ def run(store, telegram) -> None:
                 (f"{c.get('personGivenName', '')} {c.get('personFamilyName', '')}".strip()
                  for r in (loc.get("regulatedActivities") or []) for c in (r.get("contacts") or [])
                  if "registered manager" in " ".join(c.get("personRoles") or []).lower()), ""),
+            "provider_name": prov.get("name", ""), "companies_house": prov.get("companiesHouseNumber", ""),
+            "provider_website": prov.get("website", ""), "single_site": n_sites == 1, "sites": n_sites,
+            "large_org": "council" in (prov.get("name", "") or "").lower() or n_sites > 15,
         }, None
 
     from concurrent.futures import ThreadPoolExecutor
@@ -408,8 +420,7 @@ def run(store, telegram) -> None:
     store.add_many(["radar:initialised:site4"])
     stats.pop("_seen_empty", None)
     breakdown = "\n".join(f"- {k}: {v}" for k, v in sorted(stats.items(), key=lambda kv: -kv[1]))
-    # Priority regions first, then Inadequate before Requires improvement.
-    found.sort(key=lambda p: (p["region"].lower() not in PRIORITY_REGIONS, p["rating"] != "Inadequate"))
+    found.sort(key=_priority)
     found = found[:MAX_PROSPECTS]
 
     if not found:
@@ -422,16 +433,9 @@ def run(store, telegram) -> None:
     made = []
     co_stats = {"tried": 0, "found": 0, "no_name_or_site": 0}
     for n, p in enumerate(found, 1):
-        try:
-            prov = _get(f"providers/{p['provider_id']}")
-        except Exception:
-            prov = {}
-        p["provider_name"] = prov.get("name", "")
-        if "council" in p["provider_name"].lower() or len(prov.get("locationIds") or []) > 15:
+        if p.get("large_org"):
             p["note"] = "Large organisation or council: lower priority, has its own quality team."
-            p["large_org"] = True
-        p["companies_house"] = prov.get("companiesHouseNumber", "")
-        site = p["website"] or prov.get("website", "")
+        site = p["website"] or p.get("provider_website", "")
         try:
             p["email"] = find_email(site)
         except Exception as exc:  # one odd website must never stop the whole radar
@@ -458,6 +462,7 @@ def run(store, telegram) -> None:
         # UK PECR: unsolicited marketing email is fine to companies (corporate subscribers) but not to
         # sole traders or partnerships without consent. No company number: call or write instead.
         p["can_email"] = bool(p["email"] and p["companies_house"])
+        p["video_queued"] = bool(p["can_email"] and sendspark.add(p))
         p["subject"], p["body"] = draft_email(p)
         p["status"] = "drafted"
         p["radar_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -465,6 +470,16 @@ def run(store, telegram) -> None:
         made.append(store.put_prospect(p))
         store.add_many([f"prospect:{p['location_id']}"])
 
+    # Personal videos take a few minutes to render; add each link to its email once ready.
+    queued = [m for m in made if m.get("video_queued")]
+    if queued:
+        import review
+
+        links = sendspark.wait_for_links([m["email"] for m in queued])
+        for m in queued:
+            m["video_url"] = links.get(m["email"]) or f"{REPLIES_URL}/v/{m['id']}"
+            m["body"] = review.email_body(m, m["review"], m["review_url"], m["video_url"])
+            store.put_prospect(m)
     store.save_latest_prospects([m["id"] for m in made])
     day = made[0]["radar_date"]
     csv_link = ""
@@ -475,14 +490,19 @@ def run(store, telegram) -> None:
         tok = hmac.new(os.getenv("APPROVALS_KEY").encode(), f"radar:{day}".encode(), hashlib.sha256).hexdigest()[:24]
         csv_link = f"{REPLIES_URL}/radar/{day}/{tok}.csv"
     telegram.send_message(
-        f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report.\n\n"
-        "Each draft follows below. Tap 'Open email' to open it in your mail app, already addressed and written; read it and press Send. "
+        f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report, "
+        "each with a free Report Review written from their published report.\n\n"
+        "Order: single site services first, then services where Well-led is below Good.\n\n"
+        "Each draft follows below. Read the review (link under each), then tap 'Open email': it opens in Gmail, already addressed and written. Press Send. "
         "Then reply e.g. 'sent P1 P3' so I keep track. "
         "Services without a company number or published email are marked 'call or write', because the law on "
         "unsolicited emails is stricter for sole traders and partnerships."
         + (f"\n\nEmail finder (Clearout): searched {co_stats['tried']}, found {co_stats['found']}; "
            f"{co_stats['no_name_or_site']} had no registered manager name to search with."
            + ("" if os.getenv("CLEAROUT_API_KEY") else " CLEAROUT_API_KEY is not set.") + (f" Last error: {CLEAROUT_LAST_ERROR[0]}" if CLEAROUT_LAST_ERROR[0] else ""))
+        + (("\n\nPersonal videos: " + (f"{len(queued)} queued in Sendspark." if queued else "none queued.")
+            + (f" Last Sendspark error: {sendspark.LAST_ERROR[0]}" if sendspark.LAST_ERROR[0] else ""))
+           if sendspark.enabled() else "\n\nPersonal videos are off until the Sendspark settings are added in Render.")
         + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
         + ("\n\nPrinted letters: reply 'letters' to read today's letters, then 'post all' or 'post L1 L3' to have them printed and posted."
            if os.getenv("INTELLIPRINT_API_KEY") else "")
@@ -495,7 +515,9 @@ def run(store, telegram) -> None:
             f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
             f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
             f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
-            f"{how}\nCQC page: {p['cqc_page']}\n"
+            f"{'Single site service. ' if p.get('single_site') else ''}{how}\nCQC page: {p['cqc_page']}\n"
+            + (f"Review (read this first): {p['review_url']}\n" if p.get("review_url") else "")
+            + (f"Video: {p['video_url']}\n" if p.get("video_url") else "")
             + (f"Note: {p['note']}\n" if p.get("note") else "")
             + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
             + "\n"

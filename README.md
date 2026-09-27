@@ -123,3 +123,19 @@ Setup: register free at api-portal.service.cqc.org.uk, copy your primary key, an
 | `RADAR_SEARCH_PLACES` | about 40 towns | Places searched, comma separated |
 | `RADAR_PRIORITY_REGIONS` | South East,London | Listed first |
 | `RADAR_ONLY_PRIORITY_REGIONS` | unset | Set to 1 to ignore other regions |
+
+## Free Report Review and personal video (added 28 September 2026)
+
+Each radar prospect now gets a **free one page CQC Report Review**, written from their published report:
+
+1. The job opens the service's latest assessment report on cqc.org.uk (the overall page and each key question rated below Good).
+2. Claude writes the review in Yeukai's voice: what the report found, what likely sits underneath, what to fix first in the next 30 days, and how they will know it is working. Only facts in the report are used; causes are framed as a professional view.
+3. The email carries the short review, a link to the printable review page (`/r/<id>/<token>` on the reply service) and the Enrolment Call link (tfft.io/xJERKTT).
+4. **Order of the list:** single site services first (the owner is often the manager), then services where Well-led is below Good, then priority regions, then Inadequate before Requires improvement. Councils and large groups go last.
+5. **Open email** now opens Gmail compose in kajidoricollective@gmail.com (set `GMAIL_ACCOUNT`), because the review makes the email longer than a mailto link allows. Yeukai reads and presses Send. Nothing is sent automatically.
+
+**Personal videos (Sendspark).** Yeukai records one Dynamic Video in Sendspark using the `{{first_name}}` and `{{company}}` variables. For every prospect that can be emailed, the job adds them to that video, waits up to 10 minutes for Sendspark to render, and puts their own video link in the email. If a video is not ready in time the email links to `/v/<id>`, which forwards to the video once it exists. Add `SENDSPARK_API_KEY`, `SENDSPARK_API_SECRET`, `SENDSPARK_WORKSPACE_ID` and `SENDSPARK_DYNAMIC_ID` to `wln-secrets`. Without them the radar runs as before, without videos.
+
+**sam.ai.** sam.ai has no public API, so the job keeps producing the import file. The daily link is in the Telegram summary, and `/radar/latest.csv` (X-Key header) gives the newest list to the scheduled import task. Review and video links are in the Notes column.
+
+**Tip.** The free reply service sleeps when idle, so the first person to open a review link after a quiet spell can wait up to a minute. Switching `wln-replies` to Render's Starter plan keeps it awake.

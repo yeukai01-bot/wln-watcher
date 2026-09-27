@@ -160,6 +160,9 @@ assert "no new" in sent[0][1]                                                   
 assert "/m/" in m[1] and "/m/" not in m[2]                                                   # open-email link only where allowed
 pid = m[1].split("/m/")[1].split()[0]
 r = c.get(f"/m/{pid}")
+assert r.status_code == 302 and r.headers["Location"].startswith("https://mail.google.com/mail/?authuser=kajidoricollective%40gmail.com") and "info%40oakhouse.test" in r.headers["Location"], r.headers["Location"]
+os.environ["GMAIL_ACCOUNT"] = ""
+r = c.get(f"/m/{pid}")
 assert r.status_code == 302 and r.headers["Location"].startswith("mailto:info@oakhouse.test?subject=Support") and "remove" in r.headers["Location"]
 out = say("sent P1")[0]
 assert "Recorded as sent" in out and "P1 Oak House" in out, out
@@ -228,3 +231,41 @@ assert pr.clearout_verify("bad@oak.test") == "invalid"
 assert pr._domain("https://www.Oak.test/contact") == "oak.test"
 os.environ.pop("CLEAROUT_API_KEY")
 print("CLEAROUT TESTS PASSED")
+
+
+# ---------------- free Report Review ----------------
+import review
+import ai as _ai
+LOC_HTML = '<a href=" /location/1-A/reports/AP1/overall ">Read the latest assessment report</a>'
+PAGES = {"/location/1-A": LOC_HTML,
+         "/location/1-A/reports/AP1/overall": "<main><h1>Ratings</h1><p>Overall Requires improvement</p><p>Medicines records were not always accurate.</p></main>",
+         "/location/1-A/reports/AP1/overall/well-led": "<main><p>Audits did not identify the issues we found.</p></main>"}
+txt = review.report_text(lambda path: PAGES[path], "1-A", ["Well-led: Requires improvement", "Caring: Good"])
+assert "Medicines records" in txt and "Audits did not" in txt and "WELL-LED" in txt, txt
+assert review.report_text(lambda path: "<main>no report link</main>", "1-A", []) == ""
+_ai._ask = lambda system, user, max_tokens=0: ('{"video_finding":"medicines records were not always accurate",'
+    '"found":["(Safe) Medicines records were not always accurate \u2014 in places"],"underneath":["Audits check forms, not practice"],'
+    '"fix_first":["Rebuild the medicines audit","Weekly spot checks","Share learning"],"evidence":["Fewer recording errors"],"subject":"A free review of your CQC report, Oak House"}')
+pr = {"id": "abc", "location_name": "Oak House", "rating": "Requires improvement", "report_date": "20 September 2026",
+      "registered_manager": "Ann Lee", "weak_key_questions": ["Well-led: Requires improvement"]}
+rv = review.write_review(pr, txt)
+assert "\u2014" not in rv["found"][0] and rv["video_finding"] and rv["from_report_text"]
+body = review.email_body(pr, rv, "https://x/r/abc/t", "https://sendspark.com/v/1")
+assert body.startswith("Dear Ann,") and "one minute video" in body and "tfft.io/xJERKTT" in body and "reply 'remove'" in body
+assert "Kind regards\nYeukai Kajidori" in body and " - " not in body and "\u2014" not in body
+pr["review"] = rv
+web.store.put_prospect(dict(pr))
+assert c.get(f"/r/abc/{review.token('abc')}").status_code == 200
+assert "What I think sits underneath" in c.get(f"/r/abc/{review.token('abc')}").get_data(as_text=True)
+assert c.get("/r/abc/0000").status_code == 404
+assert c.get("/radar/latest.csv").status_code == 403 and c.get("/radar/latest.csv", headers={"X-Key": "k"}).status_code == 200
+# priority: single site first, then Well-led below Good
+order = sorted([{"single_site": False, "weak_key_questions": ["Well-led: Requires improvement"], "rating": "Inadequate", "region": "London", "n": 1},
+                {"single_site": True, "weak_key_questions": ["Safe: Requires improvement"], "rating": "Requires improvement", "region": "North West", "n": 2},
+                {"single_site": True, "weak_key_questions": ["Well-led: Requires improvement"], "rating": "Requires improvement", "region": "North West", "n": 3},
+                {"large_org": True, "single_site": True, "weak_key_questions": [], "rating": "Inadequate", "region": "London", "n": 4}],
+               key=prospects._priority)
+assert [o["n"] for o in order] == [3, 2, 1, 4], order
+import sendspark
+assert not sendspark.enabled() and sendspark._find_link({"data": {"video": {"shareUrl": "https://sendspark.com/share/x"}}}) == "https://sendspark.com/share/x"
+print("REPORT REVIEW TESTS PASSED")

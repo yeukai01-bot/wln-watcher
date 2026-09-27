@@ -18,6 +18,16 @@ envVarGroups:
         generateValue: true    # used by the Claude publishing task to read approvals
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-5
+      - key: SENDSPARK_API_KEY
+        sync: false            # paste in Render: Sendspark, Settings, API Credentials (personal videos)
+      - key: SENDSPARK_API_SECRET
+        sync: false            # paste in Render: Sendspark, Settings, API Credentials
+      - key: SENDSPARK_WORKSPACE_ID
+        sync: false            # the Sendspark workspace id
+      - key: SENDSPARK_DYNAMIC_ID
+        sync: false            # the id of the "CQC Report Review" dynamic video
+      - key: GMAIL_ACCOUNT
+        value: kajidoricollective@gmail.com   # Open email opens Gmail compose in this account
 
 services:
   - type: cron
