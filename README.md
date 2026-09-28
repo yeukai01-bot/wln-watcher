@@ -139,3 +139,21 @@ Each radar prospect now gets a **free one page CQC Report Review**, written from
 **sam.ai.** sam.ai has no public API, so the job keeps producing the import file. The daily link is in the Telegram summary, and `/radar/latest.csv` (X-Key header) gives the newest list to the scheduled import task. Review and video links are in the Notes column.
 
 **Tip.** The free reply service sleeps when idle, so the first person to open a review link after a quiet spell can wait up to a minute. Switching `wln-replies` to Render's Starter plan keeps it awake.
+
+
+## Trafft booking alerts
+
+Trafft (ybc.admin.trafft.com > Integrations > Webhooks) sends every booking event to the reply service, and each one
+arrives on Telegram:
+
+| Trafft webhook | URL |
+|---|---|
+| Appointment Booked | https://wln-replies.onrender.com/trafft/booked |
+| Appointment Canceled | https://wln-replies.onrender.com/trafft/canceled |
+| Appointment Rescheduled | https://wln-replies.onrender.com/trafft/rescheduled |
+| Appointment Status Changed | https://wln-replies.onrender.com/trafft/status |
+| Appointment Schedule (1 hour before) | https://wln-replies.onrender.com/trafft/reminder |
+
+The morning run also lists the day's calls, and the Telegram command `bookings` lists the next two weeks.
+Optional hardening: copy Trafft's Verification Token into Render (wln-secrets) as `TRAFFT_TOKEN`; the service then
+rejects any booking message that does not carry it. `GET /trafft/last` (X-Key) shows the last raw payload.

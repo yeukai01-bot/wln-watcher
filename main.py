@@ -175,8 +175,21 @@ def backlog_notice() -> None:
         print("backlog notice failed:", exc)
 
 
+def todays_calls() -> None:
+    """Morning list of today's booked calls (from Trafft webhooks)."""
+    try:
+        import bookings
+
+        text = bookings.todays_calls(Store())
+        if text:
+            telegram.send_message(text)
+    except Exception as exc:
+        print("todays calls failed:", exc)
+
+
 def main() -> None:
     rc = 0
+    todays_calls()
     try:
         rc = run()
     except Exception:

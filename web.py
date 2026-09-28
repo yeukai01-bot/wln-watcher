@@ -44,7 +44,10 @@ HELP = (
     "letters shows the letters waiting, each with a link to read it.\n"
     "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
     "skip L2 drops one for good.\n\n"
-    "published 3 <link> [short link] marks topic 3 as live if it was published by hand."
+    "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
+    "Bookings (Trafft):\n"
+    "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call.\n"
+    "bookings lists the calls coming up in the next two weeks."
 )
 
 
@@ -94,6 +97,9 @@ def handle_text(text: str) -> str:
             f"{a['number']} ({a['date']}): {a['headline']}" + ("" if a.get("draft") else "  [draft in progress]")
             for a in waiting
         )
+    if t in ("bookings", "booking", "calls", "/bookings"):
+        import bookings
+        return bookings.list_text(store)
     if t in ("leads", "prospects", "radar"):
         lst = store.latest_prospects()
         if not lst:
@@ -469,6 +475,44 @@ def suppress():
     if any(emails):
         telegram.send_message("Asked not to be contacted again, now blocked: " + ", ".join(e for e in emails if e))
     return jsonify({"ok": True, "suppressed": len(store.suppressed())})
+
+
+TRAFFT_EVENTS = {"booked", "canceled", "rescheduled", "reminder", "status"}
+
+
+@app.post("/trafft/<event>")
+def trafft_webhook(event: str):
+    """Trafft booking webhooks (Integrations > Webhooks). Sends each event to Telegram."""
+    import bookings
+
+    event = event.lower()
+    if event not in TRAFFT_EVENTS:
+        abort(404)
+    expected = os.getenv("TRAFFT_TOKEN", "")
+    if expected:
+        given = (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+        if not hmac.compare_digest(expected, given):
+            abort(403)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict() or {"body": request.get_data(as_text=True)[:5000]}
+    try:
+        bookings.handle(store, event, payload, telegram.send_message)
+    except Exception as exc:  # never make Trafft retry forever; tell Yeukai instead
+        telegram.send_message(f"A Trafft {event} update arrived but could not be read ({type(exc).__name__}). "
+                              f"Check the booking in Trafft: {bookings.ADMIN}")
+    return jsonify({"ok": True})
+
+
+@app.get("/trafft/last")
+def trafft_last():
+    """The last raw Trafft payload, for checking the field names (needs the X-Key header)."""
+    import bookings
+
+    if not _key_ok():
+        abort(403)
+    v = store.r.get(bookings.LAST_RAW) if store.r else None
+    return app.response_class(v or "{}", mimetype="application/json")
 
 
 @app.get("/")
