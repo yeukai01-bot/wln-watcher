@@ -76,3 +76,14 @@ services:
     plan: free
     maxmemoryPolicy: noeviction
     ipAllowList: []
+
+  # Keeps the reply service awake during UK daytime, so review and email links open instantly
+  # instead of waiting up to a minute for the free service to wake. Runs for a few seconds every
+  # 10 minutes, 06:00 to 22:59 UTC; costs pennies a month on the Starter cron plan.
+  - type: cron
+    name: wln-keep-awake
+    runtime: python
+    plan: starter
+    schedule: "*/10 6-22 * * *"
+    buildCommand: pip install requests
+    startCommand: python -c "import requests; print(requests.get('https://wln-replies.onrender.com/', timeout=90).status_code)"
