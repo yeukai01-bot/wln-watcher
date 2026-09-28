@@ -132,8 +132,11 @@ def email_body(p: dict, rv: dict, review_link: str, video_link: str = "") -> str
         "a report like this feels for a manager and team, so I have written you a short, free review of what I think "
         "sits underneath it. It is yours either way.",
     ]
+    generic = os.getenv("GENERIC_VIDEO_URL", "").strip()
     if video_link:
         parts.append(f"I also recorded a one minute video for you: {video_link}")
+    elif generic:
+        parts.append(f"I recorded a short video on how I read a report like yours: {generic}")
     parts += [
         "What the report found\n" + b(rv["found"]),
         "What I think sits underneath\n" + b(rv["underneath"]),

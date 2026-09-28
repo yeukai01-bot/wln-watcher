@@ -278,3 +278,10 @@ out = say("review https://www.cqc.org.uk/location/1-20243112295")[0]
 import time as _t; _t.sleep(0.2)
 assert "Working on a free Report Review" in out and calls_rv == ["1-20243112295"], (out, calls_rv)
 print("REVIEW COMMAND TEST PASSED")
+
+os.environ["GENERIC_VIDEO_URL"] = "https://sendspark.com/share/general"
+body2 = review.email_body(pr, rv, "https://x/r/abc/t", "")
+assert "short video on how I read a report like yours: https://sendspark.com/share/general" in body2
+assert "one minute video for you" in review.email_body(pr, rv, "https://x/r/abc/t", "https://sendspark.com/v/1")
+os.environ.pop("GENERIC_VIDEO_URL")
+print("GENERIC VIDEO TEST PASSED")

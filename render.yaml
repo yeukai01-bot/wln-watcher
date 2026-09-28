@@ -26,6 +26,8 @@ envVarGroups:
         sync: false            # the Sendspark workspace id
       - key: SENDSPARK_DYNAMIC_ID
         sync: false            # the id of the "CQC Report Review" dynamic video
+      - key: GENERIC_VIDEO_URL
+        sync: false            # optional: one general video link used when no personal video is made
       - key: GMAIL_ACCOUNT
         value: kajidoricollective@gmail.com   # Open email opens Gmail compose in this account
 
