@@ -254,7 +254,7 @@ def prospects_csv(items: list[dict]) -> str:
                  f"Provider: {p.get('provider_name', '')}. {'Single site service. ' if p.get('single_site') else ''}{p.get('note', '')}"
                  + (f"\nReview: {p['review_url']}" if p.get("review_url") else "")
                  + (f"\nVideo: {p['video_url']}" if p.get("video_url") else "")
-                 + "\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
+                 + f"\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
         wr.writerow([first, last, p.get("location_name", ""), p.get("email", "") if p.get("can_email") else "",
                      p.get("phone", ""), p.get("website", ""), p.get("town", ""), p.get("region", ""), "CQC report radar",
                      p.get("rating", ""), iso, "; ".join(p.get("weak_key_questions") or []), p.get("provider_id", ""),
