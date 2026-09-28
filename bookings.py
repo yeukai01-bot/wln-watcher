@@ -238,7 +238,10 @@ def message(event: str, b: dict, old: dict | None = None) -> str:
         was = f"\nWas: {when(old)}" if old and old.get("start") and old.get("start") != b.get("start") else ""
         return "Rescheduled\n\n" + _details(b) + was
     if event == "reminder":
-        tip = "\n\nHave their CQC report open and the Accelerator checkout link ready." if _is_cqc_call(b) else ""
+        tip = ""
+        if _is_cqc_call(b):
+            tip = ("\n\n" + b["brief_short"] + "\nThe full call brief was sent when they booked.") if b.get("brief_short") \
+                else "\n\nHave their CQC report open and the Accelerator checkout link ready."
         return "Call in 1 hour\n\n" + _details(b) + tip
     if event == "status":
         return f"Booking status changed to {b.get('status') or 'unknown'}\n\n" + _details(b)
@@ -252,7 +255,7 @@ def handle(store, event: str, payload: dict, send) -> dict:
     if old:  # keep answers from the original booking if a later event leaves them out
         if not b["answers"]:
             b["answers"] = old.get("answers", [])
-        for k in ("name", "email", "phone", "service", "meet", "start", "start_raw"):
+        for k in ("name", "email", "phone", "service", "meet", "start", "start_raw", "brief_short"):
             b[k] = b.get(k) or old.get(k, "")
     if event == "canceled":
         b["status"] = "canceled"
@@ -261,6 +264,11 @@ def handle(store, event: str, payload: dict, send) -> dict:
     if event != "reminder" or not old:
         save(store, {**(old or {}), **b})
     send(message(event, b, old))
+    if event == "booked" and _is_cqc_call(b) and re.search(r"enrol", b.get("service") or "", re.I):
+        import call_brief
+        import telegram_io
+
+        call_brief.start(b, store, telegram_io)
     return b
 
 

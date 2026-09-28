@@ -47,7 +47,9 @@ HELP = (
     "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
     "Bookings (Trafft):\n"
     "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call.\n"
-    "bookings lists the calls coming up in the next two weeks."
+    "bookings lists the calls coming up in the next two weeks.\n"
+    "Every Enrolment Call booking also brings a call brief: what CQC found, what is likely underneath, how to open, questions, the offer that fits and the close.\n"
+    "brief <CQC link or service name> writes one on request."
 )
 
 
@@ -97,6 +99,11 @@ def handle_text(text: str) -> str:
             f"{a['number']} ({a['date']}): {a['headline']}" + ("" if a.get("draft") else "  [draft in progress]")
             for a in waiting
         )
+    br = re.match(r"^brief\s+(.+)$", text.strip(), re.I | re.S)
+    if br:
+        import call_brief
+        call_brief.on_request(br.group(1).strip(), store, telegram)
+        return "Writing a call brief now. It takes a minute or two and will arrive here."
     if t in ("bookings", "booking", "calls", "/bookings"):
         import bookings
         return bookings.list_text(store)
