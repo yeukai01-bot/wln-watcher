@@ -561,4 +561,8 @@ def review_one(lid: str, store, telegram) -> None:
         p["video_url"] = got or f"{REPLIES_URL}/v/{p['id']}"
         p["body"] = review.email_body(p, p["review"], p["review_url"], p["video_url"])
     store.put_prospect(p)
-    telegram.send_message("Report Review on request:\n\n" + prospect_message(p))
+    video_note = ""
+    if p.get("can_email") and not p.get("video_queued"):
+        video_note = ("\n\nNo personal video: " + ("Sendspark settings are missing in Render." if not sendspark.enabled()
+                      else f"Sendspark did not accept it. {sendspark.LAST_ERROR[0] or 'No reason given.'}"))
+    telegram.send_message("Report Review on request:\n\n" + prospect_message(p) + video_note)
