@@ -445,7 +445,7 @@ def run(store, telegram) -> None:
         telegram.send_message("Report radar is not running yet: add your free CQC API key to Render as CQC_API_KEY.")
         return
     first = not store.has("radar:initialised:site4")
-    period = "month" if first else "week"
+    period = os.getenv("RADAR_PERIOD", "month")  # "week" or "month"; month keeps a steady flow while never repeating a service
     candidates, stats = site_recent(period)
     found = []
     todo = []
