@@ -223,18 +223,23 @@ def _details(b: dict) -> str:
     return "\n".join(lines)
 
 
+def _is_cqc_call(b: dict) -> bool:
+    return bool(re.search(r"enrol|cqc|accelerator|strategy|readiness", (b.get("service") or ""), re.I))
+
+
 def message(event: str, b: dict, old: dict | None = None) -> str:
     if event == "booked":
-        return ("New booking\n\n" + _details(b) +
-                "\n\nBefore the call: open their latest CQC report and find the finding they are most worried about."
-                f"\nAll bookings: {ADMIN}")
+        prep = ("\n\nBefore the call: open their latest CQC report and find the finding they are most worried about."
+                if _is_cqc_call(b) else "")
+        return "New booking\n\n" + _details(b) + prep + f"\nAll bookings: {ADMIN}"
     if event == "canceled":
         return "Cancelled\n\n" + _details(b) + "\n\nThat slot is free again."
     if event == "rescheduled":
         was = f"\nWas: {when(old)}" if old and old.get("start") and old.get("start") != b.get("start") else ""
         return "Rescheduled\n\n" + _details(b) + was
     if event == "reminder":
-        return "Call coming up\n\n" + _details(b) + "\n\nHave their CQC report open and the Accelerator checkout link ready."
+        tip = "\n\nHave their CQC report open and the Accelerator checkout link ready." if _is_cqc_call(b) else ""
+        return "Call in 1 hour\n\n" + _details(b) + tip
     if event == "status":
         return f"Booking status changed to {b.get('status') or 'unknown'}\n\n" + _details(b)
     return f"Trafft update ({event})\n\n" + _details(b)
