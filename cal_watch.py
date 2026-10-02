@@ -244,18 +244,90 @@ def check(store, send, force: bool = False) -> str:
                 start = datetime.fromisoformat(info.get("start"))
             except Exception:
                 start = None
-            if start and start > nowdt and not info.get("skip"):
+            if start and start > nowdt and not info.get("skip") and not info.get("sam_cancelled"):
                 b = bookings.get(store, "sam-" + uid) or {}
                 bookings.handle(store, "canceled", {"appointmentId": "sam-" + uid, "serviceName": b.get("service", ""),
                                                     "customerFullName": b.get("name", "")}, send)
                 notes.append(f"cancelled {uid}")
             del seen[uid]
+        if not first_run:
+            notes += _sam_status(store, send, seen, nowdt)
         _set_seen(store, seen)
         if first_run:
             return f"first run: recorded {len(seen)} existing calendar bookings, no alerts sent"
         return "checked " + str(len(events)) + " events; " + (", ".join(notes) or "nothing new")
     finally:
         _lock.release()
+
+
+# ---------------------------------------------------------------- SAM.AI status (cancellations made inside SAM.AI)
+SAM_API = "https://go.sam.ai/api/v1/scheduler/appointments"
+SAM_WARNED = "wln:sam_token_warned"
+
+
+def _sam_start(a: dict) -> datetime | None:
+    try:
+        tz = ZoneInfo(a.get("timezone") or "Europe/London")
+    except Exception:
+        tz = UK
+    try:
+        d = datetime.strptime(f"{a['scheduled_date']} {a['start_time'][:5]}", "%Y-%m-%d %H:%M")
+        return d.replace(tzinfo=tz).astimezone(UK)
+    except Exception:
+        return None
+
+
+def _sam_status(store, send, seen: dict, nowdt: datetime) -> list[str]:
+    """SAM.AI does not remove the Google Calendar entry when a booking is cancelled inside SAM.AI,
+    so read SAM.AI's own list of appointments (SAM_API_TOKEN in Render) and announce cancellations."""
+    token = os.getenv("SAM_API_TOKEN", "").strip()
+    if not token:
+        return []
+    import bookings
+
+    try:
+        r = requests.get(SAM_API, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=30)
+    except Exception as exc:
+        print(f"[sam status failed] {exc}")
+        return []
+    if r.status_code in (401, 403):
+        last = float(store.r.get(SAM_WARNED) or 0) if store.r else 0
+        if time.time() - last > 24 * 3600:
+            send("SAM.AI connection needs refreshing: cancellations made inside SAM.AI cannot be seen until the "
+                 "SAM_API_TOKEN in Render is renewed. New bookings and calendar changes still arrive as normal.")
+            if store.r:
+                store.r.set(SAM_WARNED, str(time.time()))
+        return []
+    if r.status_code != 200:
+        return []
+    data = r.json().get("data")
+    items = data.get("data") if isinstance(data, dict) else data
+    notes = []
+    for a in items or []:
+        status = (a.get("status") or "").lower()
+        if "cancel" not in status:
+            continue
+        start = _sam_start(a)
+        if not start or start <= nowdt:
+            continue
+        for uid, info in seen.items():
+            if info.get("skip") or info.get("sam_cancelled"):
+                continue
+            try:
+                same = abs((datetime.fromisoformat(info["start"]) - start).total_seconds()) < 120
+            except Exception:
+                same = False
+            if not same:
+                continue
+            info["sam_cancelled"] = True
+            info["reminded"] = True
+            b = bookings.get(store, "sam-" + uid) or {}
+            bookings.handle(store, "canceled", {"appointmentId": "sam-" + uid, "serviceName": b.get("service", "") or a.get("title", ""),
+                                                "customerFullName": b.get("name", "")}, send)
+            send("SAM.AI cancelled this booking but may leave it in your Google Calendar. "
+                 "You can delete that calendar entry; no further reminders will be sent for it.")
+            notes.append(f"sam-cancelled {uid}")
+    return notes
 
 
 def check_in_background(store, send) -> None:
