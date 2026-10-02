@@ -180,6 +180,8 @@ def handle_text(text: str) -> str:
         if missing:
             msg += ("\n\n" if msg else "") + f"Not on {latest['date']}'s list: {', '.join(missing)}"
         return msg
+    if re.fullmatch(r"(yes|yep|ok|okay|thanks|thank you|cheers|got it|done|great|perfect|noted)[.! ]*", (text or "").strip().lower()):
+        return "Noted, thank you. Type help any time to see what I can do."
     return "I did not understand that. " + HELP
 
 

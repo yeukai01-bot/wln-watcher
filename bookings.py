@@ -222,7 +222,7 @@ def _details(b: dict) -> str:
     if b.get("phone"):
         lines.append(f"Phone: {b['phone']}")
     for lab, val in b.get("answers", []):
-        lines.append(f"{lab}: {val}")
+        lines.append(f"{lab} {val}" if lab.rstrip().endswith("?") else f"{lab}: {val}")
     if b.get("meet"):
         lines.append(f"Join: {b['meet']}")
     return "\n".join(lines)
