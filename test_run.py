@@ -251,7 +251,7 @@ pr = {"id": "abc", "location_name": "Oak House", "rating": "Requires improvement
 rv = review.write_review(pr, txt)
 assert "\u2014" not in rv["found"][0] and rv["video_finding"] and rv["from_report_text"]
 body = review.email_body(pr, rv, "https://x/r/abc/t", "https://sendspark.com/v/1")
-assert body.startswith("Dear Ann,") and "one minute video" in body and "tfft.io/xJERKTT" in body and "reply 'remove'" in body
+assert body.startswith("Dear Ann,") and "one minute video" in body and "shor.by/enrolment-call" in body and "reply 'remove'" in body
 assert "Kind regards\nYeukai Kajidori" in body and " - " not in body and "\u2014" not in body
 pr["review"] = rv
 web.store.put_prospect(dict(pr))

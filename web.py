@@ -45,8 +45,9 @@ HELP = (
     "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
     "skip L2 drops one for good.\n\n"
     "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
-    "Bookings (Trafft):\n"
-    "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call.\n"
+    "Bookings (Trafft and SAM.AI):\n"
+    "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call. "
+    "SAM.AI bookings are picked up from your Google Calendar within about 10 minutes (UK daytime).\n"
     "bookings lists the calls coming up in the next two weeks.\n"
     "Every Enrolment Call booking also brings a call brief: what CQC found, what is likely underneath, how to open, questions, the offer that fits and the close.\n"
     "brief <CQC link or service name> writes one on request."
@@ -524,7 +525,24 @@ def trafft_last():
 
 @app.get("/")
 def health():
+    # The wln-keep-awake cron pings this every 10 minutes: use it to look for new SAM.AI bookings.
+    try:
+        import cal_watch
+
+        cal_watch.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
     return "Well-Led Network reply service is running."
+
+
+@app.get("/calendar/check")
+def calendar_check():
+    """Run the SAM.AI booking check now (needs the X-Key header). Returns what it found."""
+    import cal_watch
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": cal_watch.check(store, telegram.send_message, force=True)})
 
 
 def register_webhook() -> None:

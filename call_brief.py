@@ -83,6 +83,9 @@ def find_location(answers: list, service_name: str) -> tuple[str, str]:
         if lid:
             return lid, "from the report link they gave"
     name = service_name or next((v for lab, v in answers or [] if "service name" in lab.lower()), "")
+    if not name:  # SAM.AI form: "What is the name of your service, and the one thing ...?"
+        raw = next((v for lab, v in answers or [] if "name of your service" in lab.lower()), "")
+        name = re.split(r"[,.;]| - | and the | and our | but ", raw, maxsplit=1)[0].strip() if raw else ""
     if not name:
         return "", ""
     try:

@@ -26,7 +26,7 @@ import requests
 API = "https://api.intelliprint.net/v1"
 BATCH_KEY = "wln:letter_batch"
 TESTED_KEY = "letters:tested"
-CALL_LINK = "tfft.io/CRIkyvF"
+CALL_LINK = "shor.by/strategy-call"
 MOBILE = os.getenv("LETTER_PHONE", "07875 400753")
 REPLY_EMAIL = os.getenv("LETTER_EMAIL", "kajidoricollective@gmail.com")
 ARTICLE = {

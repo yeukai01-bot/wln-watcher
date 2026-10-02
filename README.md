@@ -130,7 +130,7 @@ Each radar prospect now gets a **free one page CQC Report Review**, written from
 
 1. The job opens the service's latest assessment report on cqc.org.uk (the overall page and each key question rated below Good).
 2. Claude writes the review in Yeukai's voice: what the report found, what likely sits underneath, what to fix first in the next 30 days, and how they will know it is working. Only facts in the report are used; causes are framed as a professional view.
-3. The email carries the short review, a link to the printable review page (`/r/<id>/<token>` on the reply service) and the Enrolment Call link (tfft.io/xJERKTT).
+3. The email carries the short review, a link to the printable review page (`/r/<id>/<token>` on the reply service) and the Enrolment Call link (shor.by/enrolment-call, which opens the SAM.AI booking page).
 4. **Order of the list:** single site services first (the owner is often the manager), then services where Well-led is below Good, then priority regions, then Inadequate before Requires improvement. Councils and large groups go last.
 5. **Open email** now opens Gmail compose in kajidoricollective@gmail.com (set `GMAIL_ACCOUNT`), because the review makes the email longer than a mailto link allows. Yeukai reads and presses Send. Nothing is sent automatically.
 
@@ -157,3 +157,16 @@ arrives on Telegram:
 The morning run also lists the day's calls, and the Telegram command `bookings` lists the next two weeks.
 Optional hardening: copy Trafft's Verification Token into Render (wln-secrets) as `TRAFFT_TOKEN`; the service then
 rejects any booking message that does not carry it. `GET /trafft/last` (X-Key) shows the last raw payload.
+
+
+## SAM.AI booking alerts (cal_watch.py)
+
+SAM.AI has no webhooks, so bookings are read from the kajidoricollective@gmail.com Google Calendar.
+Set `GCAL_ICS_URL` in the wln-secrets group to the calendar's "Secret address in iCal format"
+(Google Calendar > Settings > the calendar > Integrate calendar). The wln-keep-awake ping runs the check
+every 10 minutes in UK daytime; `/calendar/check` (X-Key) runs it on demand. The first run only records
+existing events. New SAM.AI bookings get the same Telegram alert, reminder and Enrolment Call brief as
+Trafft bookings; Trafft bookings that also appear in the calendar are skipped by start time.
+
+Booking links (Oct 2026): Enrolment Call shor.by/enrolment-call, Free CQC Strategy Call shor.by/strategy-call,
+both on SAM.AI. The old Trafft links stay live until about April 2027 but go on nothing new.

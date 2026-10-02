@@ -27,6 +27,11 @@ UK = ZoneInfo("Europe/London")
 BOOKINGS = "wln:bookings"
 LAST_RAW = "wln:trafft_last"
 ADMIN = "https://ybc.admin.trafft.com/appointments"
+SAM_ADMIN = "https://go.sam.ai/scheduler"
+
+
+def _admin(b: dict) -> str:
+    return SAM_ADMIN if str(b.get("id", "")).startswith("sam-") else ADMIN
 
 
 # ---------------------------------------------------------------- reading the payload
@@ -231,7 +236,10 @@ def message(event: str, b: dict, old: dict | None = None) -> str:
     if event == "booked":
         prep = ("\n\nBefore the call: open their latest CQC report and find the finding they are most worried about."
                 if _is_cqc_call(b) else "")
-        return "New booking\n\n" + _details(b) + prep + f"\nAll bookings: {ADMIN}"
+        src = "SAM.AI" if str(b.get("id", "")).startswith("sam-") else "Trafft"
+        stop = ("\n\nIf they are on a SAM.AI follow-up plan, stop it now so they are not chased: "
+                "open their lead in SAM.AI, then Follow-up.")
+        return f"New booking ({src})\n\n" + _details(b) + prep + stop + f"\nAll bookings: {_admin(b)}"
     if event == "canceled":
         return "Cancelled\n\n" + _details(b) + "\n\nThat slot is free again."
     if event == "rescheduled":

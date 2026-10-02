@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 
 import ai
 
-ENROLMENT_CALL = os.getenv("ENROLMENT_CALL_URL", "https://tfft.io/xJERKTT")
+ENROLMENT_CALL = os.getenv("ENROLMENT_CALL_URL", "https://shor.by/enrolment-call")
 RI_ARTICLE = "https://www.welllednetwork.com/blog/requires-improvement-to-good"
 INADEQUATE_ARTICLE = "https://www.welllednetwork.com/blog/rated-inadequate-what-happens-next"
 KQ_SLUG = {"Safe": "safe", "Effective": "effective", "Caring": "caring", "Responsive": "responsive", "Well-led": "well-led"}
