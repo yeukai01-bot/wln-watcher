@@ -121,6 +121,10 @@ def _nohyphen(s: str) -> str:
     return s.replace("Well-led", "Well led")
 
 
+WHATSAPP_PS = ("P.S. Want quick answers to your CQC questions? Join the Well-Led Network, my free WhatsApp group "
+               "for UK care leaders. Managers post their questions and I answer them there: https://shor.by/wln-whatsapp")
+
+
 def email_body(p: dict, rv: dict, review_link: str, video_link: str = "") -> str:
     first = (p.get("registered_manager") or "").split(" ")[0]
     hello = f"Dear {first}," if first else f"Dear {p['location_name']} team,"
@@ -147,7 +151,8 @@ def email_body(p: dict, rv: dict, review_link: str, video_link: str = "") -> str
         "A little about me: I have spent 23 years in UK health and social care, 15 of them as a CQC Registered "
         "Manager, and I have led two services to a Good rating.",
         "If you would rather not hear from me again, just reply 'remove' and I will not contact you.",
-        "Kind regards\nYeukai Kajidori\nThe Well-Led Network, welllednetwork.com\nkajidoricollective@gmail.com",
+        "Kind regards\nYeukai Kajidori\nThe Kajidori Collective\nhttps://www.welllednetwork.com/blog\nkajidoricollective@gmail.com",
+        WHATSAPP_PS,
     ]
     return "\n\n".join(parts)
 
