@@ -16,7 +16,8 @@ from bs4 import BeautifulSoup
 import ai
 
 ENROLMENT_CALL = os.getenv("ENROLMENT_CALL_URL", "https://shor.by/enrolment-call")
-RI_ARTICLE = "https://www.welllednetwork.com/blog/requires-improvement-to-good"
+# Shorby tracking link (from 5 Oct 2026) -> https://www.welllednetwork.com/blog/requires-improvement-to-good
+RI_ARTICLE = os.getenv("RI_ARTICLE_URL", "https://shor.by/ri-to-good-guide")
 INADEQUATE_ARTICLE = "https://www.welllednetwork.com/blog/rated-inadequate-what-happens-next"
 KQ_SLUG = {"Safe": "safe", "Effective": "effective", "Caring": "caring", "Responsive": "responsive", "Well-led": "well-led"}
 MAX_REPORT_CHARS = 14000
@@ -192,7 +193,7 @@ ul,ol{{margin:0;padding-left:20px}} li{{margin:0 0 5px}}
 <h2>What I would fix first, in the next 30 days</h2><ol>{li(rv.get('fix_first', []))}</ol>
 <h2>How you will know it is working</h2><ul>{li(rv.get('evidence', []))}</ul>
 <div class="call">Want to talk it through? Book a free 20 minute call: <a href="{e(ENROLMENT_CALL)}">{e(ENROLMENT_CALL.replace('https://', ''))}</a><br>
-Free guide: <a href="{e(art)}">{e(art.replace('https://www.', ''))}</a></div>
+Free guide: <a href="{e(art)}">{e(art.replace('https://', '').replace('www.', ''))}</a></div>
 <p class="fine">This review is based only on the report CQC has published, read from the outside; the likely causes are a professional view, not a diagnosis.
 The Kajidori Collective and The Well-Led Network are independent and not affiliated with the Care Quality Commission. Nothing here guarantees any inspection outcome.</p>
 </div></body></html>"""
