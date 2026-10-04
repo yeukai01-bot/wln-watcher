@@ -18,7 +18,8 @@ import ai
 ENROLMENT_CALL = os.getenv("ENROLMENT_CALL_URL", "https://shor.by/enrolment-call")
 # Shorby tracking link (from 5 Oct 2026) -> https://www.welllednetwork.com/blog/requires-improvement-to-good
 RI_ARTICLE = os.getenv("RI_ARTICLE_URL", "https://shor.by/ri-to-good-guide")
-INADEQUATE_ARTICLE = "https://www.welllednetwork.com/blog/rated-inadequate-what-happens-next"
+# Shorby tracking link (from 5 Oct 2026) -> https://www.welllednetwork.com/blog/rated-inadequate-what-happens-next
+INADEQUATE_ARTICLE = os.getenv("INADEQUATE_ARTICLE_URL", "https://shor.by/inadequate-guide")
 KQ_SLUG = {"Safe": "safe", "Effective": "effective", "Caring": "caring", "Responsive": "responsive", "Well-led": "well-led"}
 MAX_REPORT_CHARS = 14000
 
