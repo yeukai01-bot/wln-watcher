@@ -534,7 +534,43 @@ def health():
         cal_watch.check_in_background(store, telegram.send_message)
     except Exception:
         pass
+    try:  # and for free practice room tasters finished in Tough Tongue
+        import practice_rooms
+
+        practice_rooms.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
     return "Well-Led Network reply service is running."
+
+
+@app.post("/tt/ping")
+def tough_tongue_ping():
+    """Tough Tongue calls this when a session is scored. The payload is not trusted:
+    it only triggers a fresh read of Tough Tongue through the API key."""
+    import practice_rooms
+
+    practice_rooms.check_in_background(store, telegram.send_message)
+    return "ok"
+
+
+@app.get("/practice-leads")
+def practice_leads():
+    """Recent practice room leads for the daily follow-up task (needs the X-Key header)."""
+    import practice_rooms
+
+    if not _key_ok():
+        abort(403)
+    return jsonify(practice_rooms.leads(store))
+
+
+@app.get("/practice-rooms/check")
+def practice_rooms_check():
+    """Run the practice room check now (needs the X-Key header). Returns what it found."""
+    import practice_rooms
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": practice_rooms.check(store, telegram.send_message)})
 
 
 @app.get("/calendar/check")

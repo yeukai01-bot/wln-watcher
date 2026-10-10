@@ -28,6 +28,10 @@ envVarGroups:
         sync: false            # the id of the "CQC Report Review" dynamic video
       - key: GENERIC_VIDEO_URL
         sync: false            # optional: one general video link used when no personal video is made
+      - key: TT_API_KEY
+        sync: false            # paste in Render: Tough Tongue, Developer Tools, Manage API Keys (free practice room leads)
+      - key: SAM_API_TOKEN
+        sync: false            # paste in Render: SAM.AI token (practice room leads + cancellation check)
       - key: GMAIL_ACCOUNT
         value: kajidoricollective@gmail.com   # Open email opens Gmail compose in this account
 

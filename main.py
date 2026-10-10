@@ -213,6 +213,13 @@ def main() -> None:
     rc = 0
     newsletter_reminder()
     todays_calls()
+    try:  # safety net for free practice room tasters finished overnight
+        import practice_rooms
+        from store import Store
+
+        print("[practice rooms]", practice_rooms.check(Store(), telegram.send_message, hours=96))
+    except Exception as exc:
+        print("practice rooms check failed:", exc)
     try:
         rc = run()
     except Exception:
