@@ -187,8 +187,31 @@ def todays_calls() -> None:
         print("todays calls failed:", exc)
 
 
+def newsletter_reminder() -> None:
+    """Well-Led Weekly (LinkedIn newsletter, out every Thursday) reminders in this chat.
+    Wednesday: the draft written on Tuesday evening is waiting in Google Drive.
+    Thursday: publishing day."""
+    try:
+        day = datetime.now(UK).weekday()  # Monday is 0
+        if day == 2:
+            telegram.send_message(
+                "Well-Led Weekly: tomorrow's edition is drafted and waiting for your read.\n"
+                "Google Drive, search: Well-Led Weekly draft\n"
+                "Check the title, the facts flagged at the top and the cover. Note any changes in the Doc."
+            )
+        elif day == 3:
+            telegram.send_message(
+                "Well-Led Weekly goes out today.\n"
+                "Open LinkedIn in Chrome, open the Claude panel and say: publish newsletter\n"
+                "The draft is in Google Drive (search: Well-Led Weekly draft)."
+            )
+    except Exception as exc:
+        print("newsletter reminder failed:", exc)
+
+
 def main() -> None:
     rc = 0
+    newsletter_reminder()
     todays_calls()
     try:
         rc = run()
