@@ -44,10 +44,18 @@ PREPARED = re.compile(r"Prepared for:\s*\**\s*([^(\n\"*]+?)\s*\(", re.I)
 _lock = threading.Lock()
 
 
+def _tt_key() -> str:
+    """The key on its own, even if a whole example command or 'Bearer ...' was pasted into Render."""
+    raw = os.getenv("TT_API_KEY", "")
+    m = re.search(r"Bearer\s+([A-Za-z0-9_\-\.]{20,})", raw)
+    if m:
+        return m.group(1)
+    m = re.search(r"[A-Za-z0-9_\-\.]{20,}", raw)
+    return m.group(0) if m else raw.strip()
+
+
 def _tt(path: str, params: dict | None = None) -> dict:
-    key = os.getenv("TT_API_KEY", "").strip()
-    if key.lower().startswith("bearer "):
-        key = key[7:].strip()
+    key = _tt_key()
     r = requests.get(f"{TT_API}{path}", params=params or {}, timeout=30,
                      headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
     r.raise_for_status()
@@ -141,7 +149,7 @@ def check(store, send, hours: int = 72) -> str:
             try:
                 items = _tt("/v2/sessions", {"scenario_id": sid_scn, "from_date": since, "is_org": "true", "limit": 50}).get("sessions") or []
             except Exception as exc:
-                print(f"[tt list failed] {taster}: {exc}")
+                print(f"[tt list failed] {taster}: {type(exc).__name__} {getattr(getattr(exc, 'response', None), 'status_code', '')}")
                 continue
             for it in items:
                 sid = it.get("id")
