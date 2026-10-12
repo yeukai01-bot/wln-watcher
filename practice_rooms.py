@@ -5,7 +5,12 @@ When someone finishes one of the four free tasters, this:
   2. picks out the name and email the person gave the AI inspector, their score and weakest area,
   3. adds them to SAM.AI as a lead in the folder "AI Practice Room Leads" (SAM_API_TOKEN in Render),
   4. tells Yeukai in Telegram straight away.
-Nobody is emailed from here. Follow-up emails are drafted by the daily Claude task and sent only after his yes.
+Nobody is emailed from here. Follow-up emails are drafted by the daily Claude task and sent from SAM.AI only after his yes.
+
+12 Oct 2026 fix: the tasters give their score on screen, so Tough Tongue stores NO evaluation for the session.
+The old check waited for an evaluation that never came, so nobody was ever picked up. Now a finished session is
+handled once it has been finished for 15 minutes, evaluation or not, and the name and email are read from the
+inspector's own note in the transcript ("full_name: ..." / "email: ...").
 
 Runs every 10 minutes from the keep-awake ping (UK daytime), instantly when Tough Tongue calls /tt/ping,
 and once more from the morning cron as a safety net. Each session is handled once (remembered in Redis).
@@ -39,6 +44,9 @@ LEADS = "wln:practice_leads"    # Redis hash: session id -> lead record (JSON)
 SAM_WARNED = "wln:tt_sam_warned"
 OWN = re.compile(r"kajidori|yeukai|example\.com|toughtongue|welllednetwork|sam\.ai|shor\.by", re.I)
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+NOTE_NAME = re.compile(r"full_name:\s*([^\n\"]+)", re.I)
+NOTE_EMAIL = re.compile(r"email:\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})", re.I)
+GRACE_MINUTES = 15  # wait this long after a session finishes, in case Tough Tongue adds an evaluation
 PREPARED = re.compile(r"Prepared for:\s*\**\s*([^(\n\"*]+?)\s*\(", re.I)
 
 _lock = threading.Lock()
@@ -85,8 +93,11 @@ def extract(s: dict) -> dict:
     ev = s.get("evaluation_results") or {}
     email = (s.get("user_email") or "").strip()
     if not email or OWN.search(email):
+        m = NOTE_EMAIL.search(blob)
+        email = m.group(1) if m and not OWN.search(m.group(1)) else ""
+    if not email:
         email = next((e for e in EMAIL.findall(blob) if not OWN.search(e)), "")
-    m = PREPARED.search(blob)
+    m = PREPARED.search(blob) or NOTE_NAME.search(blob)
     name = (m.group(1).strip() if m else "") or (s.get("user_name") or "").strip()
     if not name or "@" in name or OWN.search(name) or name.lower() in ("not given", "anonymous", "guest"):
         name = ""
@@ -155,8 +166,10 @@ def check(store, send, hours: int = 72) -> str:
                 sid = it.get("id")
                 if not sid or (store.r and store.r.sismember(SEEN, sid)):
                     continue
-                if (it.get("status") or "").lower() != "completed" or not it.get("evaluation_results"):
-                    continue  # not scored yet: try again on the next check
+                if (it.get("status") or "").lower() != "completed":
+                    continue  # still running: try again on the next check
+                if not it.get("evaluation_results") and _minutes_since(it) < GRACE_MINUTES:
+                    continue  # give Tough Tongue a few minutes to add an evaluation, if it is going to
                 try:
                     full = _tt(f"/sessions/{sid}", {"include_recording_url": "false"})
                 except Exception:
@@ -166,6 +179,9 @@ def check(store, send, hours: int = 72) -> str:
                         "date": (it.get("completed_at") or it.get("created_at") or "")[:10], **info}
                 if store.r:
                     store.r.sadd(SEEN, sid)
+                if not info["email"] and not info["name"]:
+                    print(f"[practice rooms] {taster} session {sid} ended before a name or email was given; skipped")
+                    continue
                 if not info["email"] or OWN.search(info["email"]):
                     if not info["email"]:
                         send(f"Practice room: someone finished the {taster} but gave no email, so they could not be added "
@@ -182,12 +198,24 @@ def check(store, send, hours: int = 72) -> str:
                     f"Weakest area: {lead['weakest'] or 'see the Tough Tongue report'}\n"
                     f"Paid next step: {nxt}\n"
                     f"SAM.AI: {lead['sam']}\n"
-                    "Your follow-up email will be drafted for your yes in the morning task."
+                    "Your follow-up email will be drafted for your yes in the morning task and sent from SAM.AI."
                 )
                 done.append(sid)
         return f"handled {len(done)}"
     finally:
         _lock.release()
+
+
+def _minutes_since(it: dict) -> float:
+    """Minutes since the session finished (or started, if Tough Tongue gives no finish time)."""
+    raw = it.get("completed_at") or it.get("updated_at") or it.get("created_at") or ""
+    try:
+        t = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - t).total_seconds() / 60
+    except Exception:
+        return 9999.0  # no usable time: don't hold it back
 
 
 def next_step(taster: str) -> str:
