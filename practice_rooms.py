@@ -161,6 +161,26 @@ def check(store, send, hours: int = 72) -> str:
             try:
                 resp = _tt("/v2/sessions", {"scenario_id": sid_scn, "from_date": since, "is_org": "true", "limit": 50})
                 items = _session_list(resp)
+                if not items:
+                    # 13 Oct 2026: the filtered call returned nothing even with sessions present.
+                    # Try simpler queries and filter by scenario and date here instead.
+                    for params in ({"scenario_id": sid_scn, "limit": 50},
+                                   {"scenario_id": sid_scn, "is_org": "true", "limit": 50},
+                                   {"is_org": "true", "limit": 100},
+                                   {"limit": 100}):
+                        try:
+                            r2 = _tt("/v2/sessions", params)
+                        except Exception as exc2:
+                            print(f"[practice rooms] retry {sorted(params)} failed: {getattr(getattr(exc2, 'response', None), 'status_code', '')}")
+                            continue
+                        got = _session_list(r2)
+                        print(f"[practice rooms] retry {sorted(params)}: {len(got)} listed; page_meta {str(r2.get('page_meta') if isinstance(r2, dict) else '')[:200]}")
+                        got = [i for i in got if _scenario_of(i) in ("", sid_scn)]
+                        got = [i for i in got if str(i.get("created_at") or "")[:19] >= since or not i.get("created_at")]
+                        if got:
+                            items = got
+                            break
+                print(f"[practice rooms] page_meta {str(resp.get('page_meta') if isinstance(resp, dict) else '')[:200]}")
                 print(f"[practice rooms] {taster}: {len(items)} session(s) listed; response keys {list(resp)[:8] if isinstance(resp, dict) else type(resp).__name__}; "
                       f"statuses {[str(i.get('status')) for i in items][:10]}; "
                       f"first item keys {sorted(items[0])[:25] if items else '-'}")
@@ -209,6 +229,13 @@ def check(store, send, hours: int = 72) -> str:
         return f"handled {len(done)}"
     finally:
         _lock.release()
+
+
+def _scenario_of(it: dict) -> str:
+    sc = it.get("scenario")
+    if isinstance(sc, dict):
+        return str(sc.get("id") or sc.get("_id") or "")
+    return str(it.get("scenario_id") or sc or "")
 
 
 def _session_list(resp) -> list:
