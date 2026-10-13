@@ -46,6 +46,7 @@ OWN = re.compile(r"kajidori|yeukai|example\.com|toughtongue|welllednetwork|sam\.
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 NOTE_NAME = re.compile(r"full_name:\s*([^\n\"]+)", re.I)
 NOTE_EMAIL = re.compile(r"email:\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})", re.I)
+DONE_STATUSES = {"completed", "complete", "ended", "finished", "analyzed", "analysed", "done"}
 GRACE_MINUTES = 15  # wait this long after a session finishes, in case Tough Tongue adds an evaluation
 PREPARED = re.compile(r"Prepared for:\s*\**\s*([^(\n\"*]+?)\s*\(", re.I)
 
@@ -158,7 +159,11 @@ def check(store, send, hours: int = 72) -> str:
         done = []
         for sid_scn, (taster, nxt) in TASTERS.items():
             try:
-                items = _tt("/v2/sessions", {"scenario_id": sid_scn, "from_date": since, "is_org": "true", "limit": 50}).get("sessions") or []
+                resp = _tt("/v2/sessions", {"scenario_id": sid_scn, "from_date": since, "is_org": "true", "limit": 50})
+                items = _session_list(resp)
+                print(f"[practice rooms] {taster}: {len(items)} session(s) listed; response keys {list(resp)[:8] if isinstance(resp, dict) else type(resp).__name__}; "
+                      f"statuses {[str(i.get('status')) for i in items][:10]}; "
+                      f"first item keys {sorted(items[0])[:25] if items else '-'}")
             except Exception as exc:
                 print(f"[tt list failed] {taster}: {type(exc).__name__} {getattr(getattr(exc, 'response', None), 'status_code', '')}")
                 continue
@@ -166,7 +171,7 @@ def check(store, send, hours: int = 72) -> str:
                 sid = it.get("id")
                 if not sid or (store.r and store.r.sismember(SEEN, sid)):
                     continue
-                if (it.get("status") or "").lower() != "completed":
+                if (it.get("status") or "").lower() not in DONE_STATUSES:
                     continue  # still running: try again on the next check
                 if not it.get("evaluation_results") and _minutes_since(it) < GRACE_MINUTES:
                     continue  # give Tough Tongue a few minutes to add an evaluation, if it is going to
@@ -204,6 +209,23 @@ def check(store, send, hours: int = 72) -> str:
         return f"handled {len(done)}"
     finally:
         _lock.release()
+
+
+def _session_list(resp) -> list:
+    """Tough Tongue has returned the list under different keys; accept any of them."""
+    if isinstance(resp, list):
+        return [i for i in resp if isinstance(i, dict)]
+    if not isinstance(resp, dict):
+        return []
+    for k in ("sessions", "data", "items", "results"):
+        v = resp.get(k)
+        if isinstance(v, list):
+            return [i for i in v if isinstance(i, dict)]
+        if isinstance(v, dict):
+            for k2 in ("sessions", "items", "results", "data"):
+                if isinstance(v.get(k2), list):
+                    return [i for i in v[k2] if isinstance(i, dict)]
+    return []
 
 
 def _minutes_since(it: dict) -> float:
