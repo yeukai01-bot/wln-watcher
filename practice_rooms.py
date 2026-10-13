@@ -180,6 +180,21 @@ def check(store, send, hours: int = 72) -> str:
                         if got:
                             items = got
                             break
+                if not items:
+                    # 13 Oct 2026: v2 returned total 0 for every query. Try the older v1 list ("all sessions for your account").
+                    for params in ({"scenario_id": sid_scn, "limit": 50}, {"limit": 100}):
+                        try:
+                            r1 = _tt("/sessions", params)
+                        except Exception as exc1:
+                            print(f"[practice rooms] v1 {sorted(params)} failed: {getattr(getattr(exc1, 'response', None), 'status_code', '')}")
+                            continue
+                        got = _session_list(r1)
+                        print(f"[practice rooms] v1 {sorted(params)}: {len(got)} listed; keys {list(r1)[:6] if isinstance(r1, dict) else type(r1).__name__}")
+                        got = [i for i in got if _scenario_of(i) in ("", sid_scn)]
+                        got = [i for i in got if str(i.get("created_at") or "")[:19] >= since or not i.get("created_at")]
+                        if got:
+                            items = got
+                            break
                 print(f"[practice rooms] page_meta {str(resp.get('page_meta') if isinstance(resp, dict) else '')[:200]}")
                 print(f"[practice rooms] {taster}: {len(items)} session(s) listed; response keys {list(resp)[:8] if isinstance(resp, dict) else type(resp).__name__}; "
                       f"statuses {[str(i.get('status')) for i in items][:10]}; "
