@@ -66,7 +66,10 @@ def _tt_key() -> str:
 def _tt(path: str, params: dict | None = None) -> dict:
     key = _tt_key()
     r = requests.get(f"{TT_API}{path}", params=params or {}, timeout=30,
-                     headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
+                     headers={"Authorization": f"Bearer {key}", "Accept": "application/json",
+                              # 14 Oct 2026 (Ajitesh, Tough Tongue): without this header the API only
+                              # searches personal sessions; this is The Well-Led Network workspace ID.
+                              "X-TT-ORG": os.getenv("TT_ORG_ID", "6ac57871a26304c626e8cdc8").strip()})
     r.raise_for_status()
     return r.json()
 
