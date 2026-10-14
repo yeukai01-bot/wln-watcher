@@ -514,6 +514,39 @@ def trafft_webhook(event: str):
     return jsonify({"ok": True})
 
 
+@app.get("/ew/registrants")
+def everwebinar_registrants():
+    """Recent webinar registrants and the last raw payload (needs the X-Key header)."""
+    import registrants
+
+    if not _key_ok():
+        abort(403)
+    raw = store.r.get(registrants.LAST_RAW) if store.r else None
+    return jsonify({"registrants": registrants.recent(store), "last_raw": raw})
+
+
+@app.post("/ew")
+@app.post("/ew/<path:event>")
+def everwebinar_webhook(event: str = "registered"):
+    """EverWebinar / WebinarJam Custom Webhook: each new registrant -> SAM.AI lead + Telegram alert."""
+    import registrants
+
+    expected = os.getenv("EW_TOKEN", "")
+    if expected:
+        given = (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+        if not hmac.compare_digest(expected, given):
+            abort(403)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict() or request.args.to_dict() or {"body": request.get_data(as_text=True)[:5000]}
+    try:
+        return jsonify(registrants.handle(store, event.lower(), payload, telegram.send_message))
+    except Exception as exc:  # never make EverWebinar retry forever; tell Yeukai instead
+        telegram.send_message(f"A webinar registration arrived but could not be read ({type(exc).__name__}). "
+                              "Check Registrants in EverWebinar: https://app.webinarjam.com/my-registrants")
+        return jsonify({"ok": True})
+
+
 @app.get("/trafft/last")
 def trafft_last():
     """The last raw Trafft payload, for checking the field names (needs the X-Key header)."""
