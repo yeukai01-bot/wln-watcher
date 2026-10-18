@@ -1,0 +1,712 @@
+"""The reply service: lets Yeukai approve topics by replying on Telegram.
+
+Telegram sends each message Yeukai types to /telegram/<WEBHOOK_SECRET>. Only messages from
+TELEGRAM_CHAT_ID are accepted. Replies understood:
+  "1 3"       approve topics 1 and 3 from the latest morning list
+  "queue"     show what is approved and waiting to be published
+  "cancel 2"  withdraw topic 2 if it has not been published yet
+  "help"      show these instructions
+
+The scheduled Claude publishing task reads approved topics from /approvals and reports back to
+/approvals/<id>/done (both need the APPROVALS_KEY). Nothing here publishes anything.
+"""
+from __future__ import annotations
+
+import hmac
+import os
+import re
+import threading
+import time
+
+from flask import Flask, abort, jsonify, request
+
+import ai
+import telegram_io as telegram
+from store import Store
+
+app = Flask(__name__)
+store = Store()
+
+HELP = (
+    "How to use this chat:\n"
+    "Reply with topic numbers from this morning's list, e.g. 1 3, to approve them for publishing.\n"
+    "queue shows what is waiting.\n"
+    "cancel 2 withdraws topic 2 if it has not gone live.\n"
+    "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
+    "Approved topics are written, checked and published at the next publishing run, and you get the live link here.\n\n"
+    "Report radar (CQC outreach):\n"
+    "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
+    "sent P1 P3 records that you sent those.\n"
+    "leads shows today's radar list and what has been sent.\n"
+    "remove name@example.com stops the radar ever drafting to that address again.\n"
+    "review <CQC link> writes a free Report Review, email and video for any service, e.g. review https://www.cqc.org.uk/location/1-123456789\n\n"
+    "Printed letters (7-day trial):\n"
+    "letters shows the letters waiting, each with a link to read it.\n"
+    "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
+    "skip L2 drops one for good.\n\n"
+    "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
+    "Self-Check scores: readers who click their total at welllednetwork.com/self-check-score arrive here; 0 to 12 means call them within 24 hours.\n\n"
+    "Bookings (Trafft and SAM.AI):\n"
+    "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call. "
+    "SAM.AI bookings are picked up from your Google Calendar within about 10 minutes (UK daytime).\n"
+    "bookings lists the calls coming up in the next two weeks.\n"
+    "Every Enrolment Call booking also brings a call brief: what CQC found, what is likely underneath, how to open, questions, the offer that fits and the close.\n"
+    "brief <CQC link or service name> writes one on request.\n\n"
+    "LinkedIn (Sendpilot):\n"
+    "New LinkedIn replies arrive here within about 10 minutes (UK daytime), each with a drafted answer and a code like L3.\n"
+    "li send L3 sends the draft exactly as shown. li say L3 <your words> sends your own. li skip L3 leaves it.\n"
+    "li lists replies still waiting. Nothing is sent on LinkedIn without one of these replies.\n"
+    "Radar services whose registered manager is found on LinkedIn are added to the CQC Radar campaign automatically.\n\n"
+    "Email (SalesBlink):\n"
+    "New email replies arrive here within about 10 minutes, each with a drafted answer and a code like E3.\n"
+    "sb send E3 sends the draft exactly as shown. sb say E3 <your words> sends your own. sb skip E3 leaves it.\n"
+    "sb lists replies still waiting. Nothing is emailed without one of these replies. "
+    "Anyone who asks to be removed is blocked straight away and you are told."
+)
+
+
+def _key_ok() -> bool:
+    expected = os.getenv("APPROVALS_KEY", "")
+    given = request.headers.get("X-Key") or request.args.get("key", "")
+    return bool(expected) and hmac.compare_digest(expected, given)
+
+
+def _draft_in_background(aid: str) -> None:
+    a = store.get_approval(aid)
+    if not a or a.get("draft"):
+        return
+    try:
+        md, check, problem = ai.draft_and_check(a)
+    except Exception as exc:  # report, never crash the web service
+        md, check, problem = None, None, f"Drafting failed: {type(exc).__name__}: {str(exc)[:200]}"
+    a = store.get_approval(aid) or a
+    if md:
+        a["draft"] = md
+        a["fact_check"] = {k: check.get(k) for k in ("supported", "unsupported", "controversy_flags")} if check else None
+        store.put_approval(a)
+        flags = [f for f in (check or {}).get("controversy_flags", []) if f]
+        telegram.send_document(
+            f"{a['date']}-{a['number']}.md", md,
+            f"Draft ready for approved topic {a['number']}: {a['headline']}\n"
+            + (f"Flags: {'; '.join(flags)}\n" if flags else "")
+            + "Reply cancel " + str(a["number"]) + " if you want to stop it.",
+        )
+    else:
+        a["problem"] = problem
+        a["status"] = "failed"  # never leave a draftless item waiting in the publishing queue
+        store.put_approval(a)
+        telegram.send_message(f"Topic {a['number']} ({a['headline']}): {problem}\nIt has been taken out of the queue. Check the link and send write <link> again.")
+
+
+def handle_text(text: str) -> str:
+    import linkedin_sp
+
+    li = linkedin_sp.handle(text, store)
+    if li is not None:
+        return li
+    import sb_replies
+
+    sb = sb_replies.handle(text, store)
+    if sb is not None:
+        return sb
+    t = text.strip().lower()
+    latest = store.latest()
+    if t in ("help", "/start", "/help", "?"):
+        return HELP
+    if t in ("queue", "/queue", "list"):
+        waiting = store.approvals("approved")
+        if not waiting:
+            return "Nothing is waiting to be published."
+        return "Waiting to be published:\n" + "\n".join(
+            f"{a['number']} ({a['date']}): {a['headline']}" + ("" if a.get("draft") else "  [draft in progress]")
+            for a in waiting
+        )
+    br = re.match(r"^brief\s+(.+)$", text.strip(), re.I | re.S)
+    if br:
+        import call_brief
+        call_brief.on_request(br.group(1).strip(), store, telegram)
+        return "Writing a call brief now. It takes a minute or two and will arrive here."
+    if t in ("bookings", "booking", "calls", "/bookings"):
+        import bookings
+        return bookings.list_text(store)
+    if t in ("leads", "prospects", "radar"):
+        lst = store.latest_prospects()
+        if not lst:
+            return "No radar list yet."
+        return "Today's radar list:\n" + "\n".join(
+            f"{p['code']} {p['location_name']} ({p['rating']}): {p['status']}" + ("" if p.get("can_email") else ", call or write") for p in lst)
+    pub = re.match(r"^(published|live)\s+(\d+)\s+(https?://\S+)(?:\s+(\S+))?\s*$", text.strip(), re.I)
+    if pub:
+        return mark_published(int(pub.group(2)), pub.group(3), pub.group(4) or "")
+    if t in ("letters", "letter", "post", "/letters"):
+        import letters
+        return letters.list_letters(store, _base_url())
+    pl = re.match(r"^post\s+(.+)$", t)
+    if pl:
+        import letters
+        return letters.post(store, pl.group(1))
+    sk = re.match(r"^(skip|noletter)\s+(.+)$", t)
+    if sk:
+        import letters
+        return letters.skip(store, sk.group(2))
+    s = re.match(r"^(sent|done|send)\s+(.+)$", t)
+    if s:
+        return mark_codes_sent(s.group(2))
+    rm = re.match(r"^(remove|suppress|unsubscribe)\s+(\S+@\S+)$", t)
+    if rm:
+        store.add_suppressed(rm.group(2).strip(".,;"))
+        return f"Done. {rm.group(2)} will never be emailed by the radar."
+    rv = re.match(r"^review\s+.*?(1-\d{5,})", t)
+    if rv:
+        import prospects
+
+        threading.Thread(target=prospects.review_one, args=(rv.group(1), store, telegram), daemon=True).start()
+        return (f"Working on a free Report Review for CQC location {rv.group(1)}. It takes a few minutes, "
+                "longer if a personal video is being made. I will send it here.")
+    w = re.match(r"^(write|draft|article)\s+(https?://\S+)\s*(.*)$", text.strip(), re.I | re.S)
+    if w:
+        url = w.group(2).rstrip(".,;:!?)]}'\"")
+        return request_article(url, w.group(3).strip().lstrip(".,;: ").strip())
+    m = re.match(r"^(cancel|stop|withdraw)\s+(\d+)$", t)
+    if m:
+        n = int(m.group(2))
+        for a in store.approvals("approved"):
+            if a["number"] == n and latest and a["date"] == latest["date"]:
+                a["status"] = "cancelled"
+                store.put_approval(a)
+                return f"Cancelled topic {n}: {a['headline']}. It will not be published."
+        return f"I could not find an approved, unpublished topic {n} from the latest list."
+    nums = [int(x) for x in re.findall(r"\d+", t)]
+    if nums and re.fullmatch(r"[\d\s,and&+.]+", t):
+        if not latest or not latest.get("topics"):
+            return "There is no morning list to approve from yet."
+        by_num = {x["number"]: x for x in latest["topics"]}
+        already = {(a["date"], a["number"]) for a in store.approvals() if a.get("status") in ("approved", "published")}
+        done, missing = [], []
+        for n in dict.fromkeys(nums):
+            topic = by_num.get(n)
+            if not topic:
+                missing.append(str(n))
+                continue
+            if (latest["date"], n) in already:
+                done.append(f"{n} (already approved)")
+                continue
+            a = store.put_approval({**topic, "date": latest["date"], "status": "approved", "approved_at": int(time.time())})
+            done.append(f"{n}: {topic['headline']}")
+            if not topic.get("draft"):
+                threading.Thread(target=_draft_in_background, args=(a["id"],), daemon=True).start()
+        msg = ""
+        if done:
+            msg += "Approved for publishing:\n" + "\n".join(done) + "\n\nThey will go live at the next publishing run and I will send you the links."
+        if missing:
+            msg += ("\n\n" if msg else "") + f"Not on {latest['date']}'s list: {', '.join(missing)}"
+        return msg
+    if re.fullmatch(r"(yes|yep|ok|okay|thanks|thank you|cheers|got it|done|great|perfect|noted)[.! ]*", (text or "").strip().lower()):
+        return "Noted, thank you. Type help any time to see what I can do."
+    return "I did not understand that. " + HELP
+
+
+def mark_published(number: int, url: str, short: str) -> str:
+    """Records an approved topic as live when it was published by hand, so it leaves the queue."""
+    waiting = [a for a in store.approvals("approved") if a["number"] == number]
+    if not waiting:
+        return f"No approved topic {number} is waiting. Reply queue to see the list."
+    a = waiting[-1]  # most recent if two days share a number
+    a["status"], a["live_url"], a["short_url"] = "published", url, short
+    a["note"] = "Published"
+    store.put_approval(a)
+    return f"Marked as live: {a['headline']}\n{url}" + (f"\nShort link: {short}" if short else "")
+
+
+def mark_codes_sent(which: str) -> str:
+    lst = store.latest_prospects()
+    if not lst:
+        return "There is no radar list yet."
+    by_code = {p["code"].lower(): p for p in lst}
+    if which.strip() in ("all", "everything", "them all"):
+        codes = [p["code"].lower() for p in lst if p.get("can_email")]
+    else:
+        codes = [c if c.startswith("p") else "p" + c for c in re.findall(r"p?\d+", which)]
+    done, missing = [], []
+    for c in dict.fromkeys(codes):
+        p = by_code.get(c)
+        if not p:
+            missing.append(c.upper())
+            continue
+        p["status"] = "sent"
+        p["sent_at"] = int(time.time())
+        store.put_prospect(p)
+        done.append(f"{p['code']} {p['location_name']}")
+    msg = ("Recorded as sent:\n" + "\n".join(done)) if done else "Nothing recorded."
+    if missing:
+        msg += "\n\nNot on today's radar list: " + ", ".join(missing)
+    return msg
+
+
+SAM_COLUMNS = ["First Name", "Last Name", "Company", "Email", "Phone", "Website", "City", "Region", "Lead Source",
+               "CQC Rating", "Last Inspection Date", "KLOE Finding", "CQC Provider ID", "CQC Report URL", "Service Type",
+               "Company Number", "Contact Route", "Notes"]
+
+
+def radar_token(day: str) -> str:
+    import hashlib
+
+    return hmac.new(os.getenv("APPROVALS_KEY", "").encode(), f"radar:{day}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def prospects_csv(items: list[dict]) -> str:
+    import csv
+    import io
+    from datetime import datetime as _dt
+
+    suppressed = set(store.suppressed())
+    buf = io.StringIO()
+    wr = csv.writer(buf)
+    wr.writerow(SAM_COLUMNS)
+    for p in items:
+        if p.get("email", "") in suppressed:
+            continue
+        first, _, last = (p.get("registered_manager") or "").partition(" ")
+        if not first:  # sam.ai needs a name, and matches duplicates on it
+            first, last = "Manager", p.get("location_name", "")
+        try:
+            iso = _dt.strptime(p.get("report_date", ""), "%d %B %Y").strftime("%Y-%m-%d")
+        except ValueError:
+            iso = ""
+        route = "Email allowed (limited company)" if p.get("can_email") else "Call or write"
+        notes = (f"CQC report radar {p.get('code', '')}. Registered manager: {p.get('registered_manager') or 'not listed'}. "
+                 f"Provider: {p.get('provider_name', '')}. {'Single site service. ' if p.get('single_site') else ''}{p.get('note', '')}"
+                 + (f"\nReview: {p['review_url']}" if p.get("review_url") else "")
+                 + (f"\nVideo: {p['video_url']}" if p.get("video_url") else "")
+                 + f"\n\nDraft email\nSubject: {p.get('subject', '')}\n\n{p.get('body', '')}")
+        wr.writerow([first, last, p.get("location_name", ""), p.get("email", "") if p.get("can_email") else "",
+                     p.get("phone", ""), p.get("website", ""), p.get("town", ""), p.get("region", ""), "CQC report radar",
+                     p.get("rating", ""), iso, "; ".join(p.get("weak_key_questions") or []), p.get("provider_id", ""),
+                     p.get("cqc_page", ""), p.get("service_type", ""), p.get("companies_house", ""), route, notes])
+    return buf.getvalue()
+
+
+@app.get("/radar/<day>/<token>.csv")
+def radar_csv(day: str, token: str):
+    """Today's radar list as a CSV laid out for the sam.ai Import Wizard (Leads, folder CQC Report Radar)."""
+    from flask import Response
+
+    if not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, radar_token(day)):
+        abort(404)
+    items = [p for p in store.prospects() if p.get("radar_date") == day]
+    return Response(prospects_csv(items), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv",
+                             "Access-Control-Allow-Origin": "https://go.sam.ai"})  # lets the sam.ai import page read it
+
+
+def _base_url() -> str:
+    return (os.getenv("REPLIES_URL") or os.getenv("RENDER_EXTERNAL_URL") or "https://wln-replies.onrender.com").rstrip("/")
+
+
+@app.get("/letter/<pid>/<token>")
+def letter_preview(pid: str, token: str):
+    """Shows Yeukai exactly what a printed letter will say, before he replies 'post'."""
+    import letters
+
+    p = store.get_prospect(pid)
+    if not p or not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, letters.preview_token(pid)):
+        abort(404)
+    letters.ensure_address(p)
+    a = letters.address_for(p)
+    addr = "<br>".join(__import__("html").escape(x) for x in [a["name"], *a["line"].split(", "), a["postcode"]])
+    return (f"<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Letter preview</title></head>"
+            f"<body style='background:#eee;margin:0;padding:16px'><div style='background:#fff;max-width:640px;margin:auto;padding:32px;box-shadow:0 1px 4px #0003'>"
+            f"<p style='font-family:sans-serif;font-size:10pt;color:#666'>Address (printed by Intelliprint in the envelope window):<br>{addr}</p><hr>"
+            f"{letters.letter_html(p)}</div></body></html>")
+
+
+@app.get("/m/<pid>")
+def open_email(pid: str):
+    """One tap from Telegram: opens the drafted email ready to send. Yeukai presses Send.
+    Gmail compose is used by default because the review makes the email longer than many mail apps
+    accept through a mailto link. Set GMAIL_ACCOUNT to "" in Render to go back to mailto."""
+    from urllib.parse import quote, urlencode
+
+    from flask import redirect
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("can_email") or p.get("email", "") in set(store.suppressed()):
+        abort(404)
+    account = os.getenv("GMAIL_ACCOUNT", "kajidoricollective@gmail.com")
+    if account:
+        q = urlencode({"authuser": account, "view": "cm", "fs": "1", "to": p["email"], "su": p["subject"], "body": p["body"]}, quote_via=quote)
+        return redirect(f"https://mail.google.com/mail/?{q}", code=302)
+    url = f"mailto:{p['email']}?subject={quote(p['subject'])}&body={quote(p['body'])}"
+    return redirect(url, code=302)
+
+
+@app.get("/r/<pid>/<token>")
+def review_page(pid: str, token: str):
+    """The free one page Report Review, as sent to the service. Printable."""
+    import review
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("review") or not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, review.token(pid)):
+        abort(404)
+    return review.page_html(p)
+
+
+@app.get("/v/<pid>")
+def video(pid: str):
+    """Personal video link used in an email when Sendspark had not finished rendering by send time."""
+    from flask import redirect
+
+    import sendspark
+
+    p = store.get_prospect(pid)
+    if not p or not p.get("video_queued"):
+        abort(404)
+    got = sendspark.link(p.get("email", ""))
+    if got:
+        return redirect(got, code=302)
+    return ("<p style='font-family:sans-serif;max-width:520px;margin:40px auto'>Your video is still being prepared. "
+            "Please try again in a few minutes.</p>"), 200
+
+
+@app.get("/radar/latest.csv")
+def radar_latest_csv():
+    """Newest radar day as a sam.ai import file, for the scheduled import task (needs the X-Key header)."""
+    from flask import Response
+
+    if not _key_ok():
+        abort(403)
+    items = store.latest_prospects()
+    day = items[0].get("radar_date", "latest") if items else "latest"
+    return Response(prospects_csv(items), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=cqc-radar-{day}.csv"})
+
+
+def _page_title(url: str) -> str:
+    import requests
+    from bs4 import BeautifulSoup
+
+    try:
+        import sources
+
+        r = requests.get(url, headers=sources.BROWSER_UA, timeout=30)
+        if r.status_code >= 400:
+            return ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        h1 = soup.find("h1")
+        title = (h1.get_text(" ", strip=True) if h1 else "") or (soup.title.get_text(strip=True) if soup.title else "")
+        return title[:200]
+    except Exception:
+        return ""
+
+
+def request_article(url: str, note: str) -> str:
+    """Yeukai asks for an article on a page he found. It is added to today's list and approved at once."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d")
+    latest = store.latest() or {"date": today, "topics": []}
+    if latest.get("date") != today:
+        latest = {"date": today, "topics": []}
+    number = max([x["number"] for x in latest["topics"]] + [0]) + 1
+    title = _page_title(url)
+    if not title or re.search(r"couldn.t find|not found|page not found|error 404", title, re.I):
+        return (f"I could not open that page: {url}\nPlease check the link (copy it straight from the address bar) and send write <link> again.")
+    topic = {
+        "number": number, "headline": f"Article on: {title}", "angle": note or "Explain what this means for adult social care providers in England and what to do now.",
+        "product": "", "lead_magnet": "", "key_date": "", "source": "Requested by Yeukai", "source_title": title,
+        "url": url, "draft": None,
+    }
+    latest["topics"].append(topic)
+    store.save_latest(latest)
+    a = store.put_approval({**topic, "date": today, "status": "approved", "approved_at": int(time.time())})
+    threading.Thread(target=_draft_in_background, args=(a["id"],), daemon=True).start()
+    return (f"Got it. Topic {number}: {title}\nI am drafting it now and will send the draft here. "
+            f"It will go live at the next publishing run. Reply cancel {number} to stop it.")
+
+
+@app.post("/telegram/<secret>")
+def telegram_webhook(secret: str):
+    if not hmac.compare_digest(secret, os.getenv("WEBHOOK_SECRET", "\x00")):
+        abort(404)
+    update = request.get_json(silent=True) or {}
+    msg = update.get("message") or update.get("edited_message") or {}
+    chat = str((msg.get("chat") or {}).get("id", ""))
+    if not msg.get("text") or chat != os.getenv("TELEGRAM_CHAT_ID"):
+        return "ok"  # ignore anyone else who finds the bot
+    telegram.send_message(handle_text(msg["text"]))
+    return "ok"
+
+
+@app.get("/approvals")
+def list_approvals():
+    if not _key_ok():
+        abort(403)
+    return jsonify([a for a in store.approvals("approved")])
+
+
+@app.post("/approvals/<aid>/done")
+def mark_done(aid: str):
+    if not _key_ok():
+        abort(403)
+    a = store.get_approval(aid)
+    if not a:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    a["status"] = "published" if body.get("live_url") else body.get("status", "failed")
+    a["live_url"] = body.get("live_url", "")
+    a["short_url"] = body.get("short_url", "")
+    a["note"] = body.get("note", "")
+    store.put_approval(a)
+    if a["status"] == "published":
+        telegram.send_message(
+            f"Live: {a['headline']}\n{a['live_url']}" + (f"\nShort link: {a['short_url']}" if a["short_url"] else "")
+            + (f"\n{a['note']}" if a["note"] else "")
+        )
+    else:
+        telegram.send_message(f"Not published: {a['headline']}\n{a['note']}")
+    return jsonify({"ok": True})
+
+
+@app.get("/prospects")
+def list_prospects():
+    if not _key_ok():
+        abort(403)
+    status = request.args.get("status", "approved_to_send")
+    suppressed = set(store.suppressed())
+    return jsonify([p for p in store.prospects(status) if p.get("email", "") not in suppressed])
+
+
+@app.post("/prospects/<pid>/sent")
+def mark_sent(pid: str):
+    if not _key_ok():
+        abort(403)
+    p = store.get_prospect(pid)
+    if not p:
+        abort(404)
+    body = request.get_json(silent=True) or {}
+    ok = body.get("status", "sent") == "sent"
+    p["status"] = "sent" if ok else "send_failed"
+    p["sent_at"] = int(time.time())
+    p["note"] = body.get("note", "")
+    store.put_prospect(p)
+    telegram.send_message(
+        (f"Sent: {p['code']} {p['location_name']} ({p['email']})" if ok else f"Could not send {p['code']} {p['location_name']}: {p['note']}"))
+    return jsonify({"ok": True})
+
+
+@app.post("/suppress")
+def suppress():
+    if not _key_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    emails = body.get("emails") or [body.get("email", "")]
+    for e in emails:
+        store.add_suppressed(e)
+    if any(emails):
+        telegram.send_message("Asked not to be contacted again, now blocked: " + ", ".join(e for e in emails if e))
+    return jsonify({"ok": True, "suppressed": len(store.suppressed())})
+
+
+TRAFFT_EVENTS = {"booked", "canceled", "rescheduled", "reminder", "status"}
+
+
+@app.post("/trafft/<event>")
+def trafft_webhook(event: str):
+    """Trafft booking webhooks (Integrations > Webhooks). Sends each event to Telegram."""
+    import bookings
+
+    event = event.lower()
+    if event not in TRAFFT_EVENTS:
+        abort(404)
+    expected = os.getenv("TRAFFT_TOKEN", "")
+    if expected:
+        given = (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+        if not hmac.compare_digest(expected, given):
+            abort(403)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict() or {"body": request.get_data(as_text=True)[:5000]}
+    try:
+        bookings.handle(store, event, payload, telegram.send_message)
+    except Exception as exc:  # never make Trafft retry forever; tell Yeukai instead
+        telegram.send_message(f"A Trafft {event} update arrived but could not be read ({type(exc).__name__}). "
+                              f"Check the booking in Trafft: {bookings.ADMIN}")
+    return jsonify({"ok": True})
+
+
+@app.get("/ew/registrants")
+def everwebinar_registrants():
+    """Recent webinar registrants and the last raw payload (needs the X-Key header)."""
+    import registrants
+
+    if not _key_ok():
+        abort(403)
+    raw = store.r.get(registrants.LAST_RAW) if store.r else None
+    return jsonify({"registrants": registrants.recent(store), "last_raw": raw})
+
+
+@app.post("/ew")
+@app.post("/ew/<path:event>")
+def everwebinar_webhook(event: str = "registered"):
+    """EverWebinar / WebinarJam Custom Webhook: each new registrant -> SAM.AI lead + Telegram alert."""
+    import registrants
+
+    expected = os.getenv("EW_TOKEN", "")
+    if expected:
+        given = (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+        if not hmac.compare_digest(expected, given):
+            abort(403)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict() or request.args.to_dict() or {"body": request.get_data(as_text=True)[:5000]}
+    try:
+        return jsonify(registrants.handle(store, event.lower(), payload, telegram.send_message))
+    except Exception as exc:  # never make EverWebinar retry forever; tell Yeukai instead
+        telegram.send_message(f"A webinar registration arrived but could not be read ({type(exc).__name__}). "
+                              "Check Registrants in EverWebinar: https://app.webinarjam.com/my-registrants")
+        return jsonify({"ok": True})
+
+
+ALLOWED_ORIGINS = {"https://www.welllednetwork.com", "https://welllednetwork.com", "null"}
+
+
+@app.route("/selfcheck/score", methods=["POST", "OPTIONS", "GET"])
+def selfcheck_score():
+    """The Self-Check score page (welllednetwork.com/self-check-score) -> Telegram alert + Brevo fields."""
+    import selfcheck_score as sc
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type",
+            "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        return ("", 204, cors)
+    if request.method == "GET":
+        return (jsonify({"ok": True, "service": "self-check score"}), 200, cors)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    try:
+        result = sc.handle(store, payload, telegram.send_message)
+    except Exception as exc:  # the reader must never see an error; tell Yeukai instead
+        telegram.send_message(f"A Self-Check score arrived but could not be processed ({type(exc).__name__}).")
+        result = {"ok": True}
+    return (jsonify(result), 200, cors)
+
+
+@app.post("/notify")
+def notify():
+    """Short status messages from Claude (e.g. the weekly LinkedIn safety check) -> Yeukai's Telegram.
+    Needs header X-Notify-Key matching the NOTIFY_KEY environment variable. Text only, max 3,500 characters."""
+    expected = os.getenv("NOTIFY_KEY", "")
+    given = request.headers.get("X-Notify-Key", "")
+    if not expected or not hmac.compare_digest(expected, given):
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("text", "")).strip()[:3500]
+    if not text:
+        abort(400)
+    telegram.send_message(text)
+    return jsonify({"ok": True})
+
+
+@app.get("/trafft/last")
+def trafft_last():
+    """The last raw Trafft payload, for checking the field names (needs the X-Key header)."""
+    import bookings
+
+    if not _key_ok():
+        abort(403)
+    v = store.r.get(bookings.LAST_RAW) if store.r else None
+    return app.response_class(v or "{}", mimetype="application/json")
+
+
+@app.get("/")
+def health():
+    # The wln-keep-awake cron pings this every 10 minutes: use it to look for new SAM.AI bookings.
+    try:
+        import cal_watch
+
+        cal_watch.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # and for new LinkedIn replies in Sendpilot
+        import linkedin_sp
+
+        linkedin_sp.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # and for new email replies in SalesBlink
+        import sb_replies
+
+        sb_replies.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # and for free practice room tasters finished in Tough Tongue
+        import practice_rooms
+
+        practice_rooms.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    return "Well-Led Network reply service is running."
+
+
+@app.post("/tt/ping")
+def tough_tongue_ping():
+    """Tough Tongue calls this when a session is scored. The payload is not trusted:
+    it only triggers a fresh read of Tough Tongue through the API key."""
+    import practice_rooms
+
+    practice_rooms.check_in_background(store, telegram.send_message)
+    return "ok"
+
+
+@app.get("/practice-leads")
+def practice_leads():
+    """Recent practice room leads for the daily follow-up task (needs the X-Key header)."""
+    import practice_rooms
+
+    if not _key_ok():
+        abort(403)
+    return jsonify(practice_rooms.leads(store))
+
+
+@app.get("/practice-rooms/check")
+def practice_rooms_check():
+    """Run the practice room check now (needs the X-Key header). Returns what it found."""
+    import practice_rooms
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": practice_rooms.check(store, telegram.send_message)})
+
+
+@app.get("/calendar/check")
+def calendar_check():
+    """Run the SAM.AI booking check now (needs the X-Key header). Returns what it found."""
+    import cal_watch
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": cal_watch.check(store, telegram.send_message, force=True)})
+
+
+def register_webhook() -> None:
+    """On Render, point the Telegram bot at this service so replies arrive here."""
+    import requests
+
+    base, token, secret = os.getenv("RENDER_EXTERNAL_URL"), os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("WEBHOOK_SECRET")
+    if not (base and token and secret):
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            data={"url": f"{base}/telegram/{secret}", "allowed_updates": '["message","edited_message"]'},
+            timeout=20,
+        )
+    except Exception as exc:
+        print("webhook registration failed:", exc)
+
+
+register_webhook()
