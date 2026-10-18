@@ -10,7 +10,7 @@ warmed-up welllednetworkhq.com mailboxes, stops when someone replies, and handle
 
 Each lead carries its own details as custom fields, so the email can name the service, the report date
 and link to that service's free Report Review:
-    {{first_name}} {{service_name}} {{rating}} {{report_date}} {{weak_areas}} {{review_url}} {{video_url}}
+    {{first_name}} {{service_name}} {{rating}} {{report_date}} {{weak_areas}} {{review_url}} {{guide_url}} {{video_url}}
 
 Settings on Render (wln-secrets):
     SALESBLINK_API_KEY         required; without it this module quietly does nothing
@@ -29,6 +29,11 @@ import requests
 API = "https://run.salesblink.io/api/public/v1.0.0"
 DEFAULT_LIST_ID = "ad2de090-00ce-4b8a-8bac-14d9f00f21de"  # SalesBlink list "CQC Radar - Supported Living"
 LAST_ERROR = [""]
+# Well-Led Network blog guide matched to the rating, used in email 1 as {{guide_url}} (tracked Shorby links)
+GUIDES = {
+    "Requires improvement": "https://shor.by/ri-to-good-guide",
+    "Inadequate": "https://shor.by/inadequate-guide",
+}
 
 
 def enabled() -> bool:
@@ -93,6 +98,7 @@ def _contact(p: dict) -> dict:
         "weak_areas": ", ".join(weak),
         "town": p.get("town", ""),
         "review_url": p.get("review_url", ""),
+        "guide_url": GUIDES.get(p.get("rating", ""), GUIDES["Requires improvement"]),
         "video_url": p.get("video_url", ""),
         "cqc_page": p.get("cqc_page", ""),
         "radar_code": p.get("code", ""),
