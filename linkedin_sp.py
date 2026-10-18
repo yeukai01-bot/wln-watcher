@@ -352,3 +352,95 @@ def handle(text: str, store) -> str | None:
     rec["status"], rec["sent_text"] = "sent", body
     _put_pending(store, rec)
     return f"Sent to {rec['name']} ({status}):\n{body}"
+
+
+# ------------------------------------------------------------------ one-off backfill from sam.ai
+
+BACKFILL_PER_DAY = int(os.getenv("LI_BACKFILL_PER_DAY", "20"))
+LEADER_RX = re.compile(r"manager|nominated|director|ceo|chief|owner|responsible|founder|provider", re.I)
+NOT_PROVIDER_RX = re.compile(r"association|alliance|partnership|council|partners in care|care providers|staffing|recruitment|"
+                             r"consultancy|compliance solutions|log my care|carelinelive|care sync|homecare association|"
+                             r"fastfalls", re.I)
+
+
+def sam_leaders() -> list[list[str]]:
+    """Named care leaders already saved in sam.ai (read live with SAM_API_TOKEN; nothing is stored in the code)."""
+    token = os.getenv("SAM_API_TOKEN", "").strip()
+    if not token:
+        return []
+    out, page = [], 1
+    while page <= 20:
+        r = requests.get("https://go.sam.ai/api/v1/crm/contacts", params={"page": page, "per_page": 100}, timeout=40,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        r.raise_for_status()
+        data = r.json().get("data") or []
+        for c in data:
+            co = c.get("company_name") or ((c.get("company") or {}).get("name") if isinstance(c.get("company"), dict) else "") or ""
+            title = c.get("job_title") or ""
+            if (c.get("is_partner") or c.get("do_not_contact") or not LEADER_RX.search(title)
+                    or not (c.get("first_name") and c.get("last_name") and co)
+                    or re.search(r"partner|IHSCM|OACP", title, re.I) or NOT_PROVIDER_RX.search(co)):
+                continue
+            out.append([str(c.get("id")), f"{c['first_name']} {c['last_name']}".strip(), co])
+        if len(data) < 100:
+            break
+        page += 1
+    return out
+
+
+def _name_fits(found: dict, wanted: str) -> bool:
+    w = [x for x in re.findall(r"[a-z]+", wanted.lower()) if len(x) > 1]
+    f = set(re.findall(r"[a-z]+", (found.get("full_name") or f"{found.get('first_name', '')} {found.get('last_name', '')}").lower()))
+    return bool(w) and w[0] in f and w[-1] in f
+
+
+def run_backfill(store, send) -> str:
+    """Each morning, look up the next batch of care leaders already saved in sam.ai and add
+    confident matches to the CQC Radar campaign. New sam.ai leaders are picked up automatically."""
+    campaign = os.getenv("SENDPILOT_RADAR_CAMPAIGN_ID", "")
+    if not (enabled() and campaign):
+        return ""
+    try:
+        rows = sam_leaders()
+    except Exception as exc:
+        return f"LinkedIn lookup of sam.ai leaders skipped today: could not read sam.ai ({type(exc).__name__})."
+    todo = [r for r in rows if not store.has(f"li:backfill:{r[0]}")][:BACKFILL_PER_DAY]
+    if not todo:
+        return ""
+
+    def look(r):
+        idx, name, company = r[0], r[1].strip(), r[2].strip()
+        m = re.match(r"(.*?)\s*\((.*)\)\s*$", company)
+        main, group = (m.group(1), m.group(2)) if m else (company, "")
+        try:
+            lead = find_linkedin(name, group or main, main)
+        except Exception as exc:
+            LAST_ERROR[0] = f"{type(exc).__name__}: {str(exc)[:200]}"
+            return r, None
+        return r, (lead if lead and _name_fits(lead, name) else None)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = list(pool.map(look, todo))
+    to_add, lines = [], []
+    for r, lead in results:
+        store.add_many([f"li:backfill:{r[0]}"])
+        if lead:
+            to_add.append({"linkedinUrl": lead["linkedin_url"], "firstName": lead.get("first_name") or r[1].split()[0],
+                           "lastName": lead.get("last_name", ""), "company": r[2], "source": "sam.ai backfill"})
+            lines.append(f"{r[1]}, {r[2]}: {lead['linkedin_url']}")
+    added = 0
+    if to_add:
+        try:
+            added = int(_post("/leads", {"campaignId": campaign, "leads": to_add}).get("leadsAdded", len(to_add)))
+        except Exception as exc:
+            LAST_ERROR[0] = str(exc)[:300]
+    left = sum(1 for r in rows if not store.has(f"li:backfill:{r[0]}"))
+    msg = (f"LinkedIn lookup of your sam.ai care leaders: checked {len(todo)} today, found {len(to_add)}, "
+           f"added {added} to the CQC Radar campaign. {left} still to check.")
+    if lines:
+        msg += "\n" + "\n".join(lines)
+    if LAST_ERROR[0] and not added and to_add:
+        msg += f"\nLast Sendpilot error: {LAST_ERROR[0]}"
+    return msg

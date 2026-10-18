@@ -231,6 +231,15 @@ def main() -> None:
         except Exception:
             pass
     run_radar()
+    try:  # sam.ai care leaders looked up on LinkedIn, a batch each morning until the list is done
+        import linkedin_sp
+        from store import Store
+
+        msg = linkedin_sp.run_backfill(Store(), telegram.send_message)
+        if msg:
+            telegram.send_message(msg)
+    except Exception as exc:
+        print("linkedin backfill failed:", exc)
     backlog_notice()
     sys.exit(rc)
 
