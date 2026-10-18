@@ -358,7 +358,8 @@ def _priority(p: dict) -> tuple:
     """Order of the morning list: single site owner-managed services first, then services where Well-led is
     below Good (exactly what the 90-Day Reset fixes), then priority regions, then Inadequate before RI."""
     wellled = any(k.lower().startswith("well-led") for k in p.get("weak_key_questions") or [])
-    return (bool(p.get("large_org")), not p.get("single_site"), not wellled,
+    target = bool(re.search(os.getenv("RADAR_SB_MATCH", "supported living"), p.get("service_type", ""), re.I))
+    return (bool(p.get("large_org")), not target, not p.get("single_site"), not wellled,
             (p.get("region") or "").lower() not in PRIORITY_REGIONS, p.get("rating") != "Inadequate")
 
 
@@ -493,6 +494,13 @@ def run(store, telegram) -> None:
             m["body"] = review.email_body(m, m["review"], m["review_url"], m["video_url"])
             store.put_prospect(m)
     store.save_latest_prospects([m["id"] for m in made])
+    sb_msg = ""
+    try:  # supported living prospects with a confirmed email go into the SalesBlink sequence
+        import salesblink_sb
+
+        sb_msg = salesblink_sb.add_radar_prospects(made, store)
+    except Exception as exc:
+        print("salesblink radar step failed:", exc)
     day = made[0]["radar_date"]
     csv_link = ""
     if os.getenv("APPROVALS_KEY"):
@@ -504,7 +512,7 @@ def run(store, telegram) -> None:
     telegram.send_message(
         f"Report radar, {datetime.now().strftime('%d %B')}: {len(made)} services with a new Inadequate or Requires improvement report, "
         "each with a free Report Review written from their published report.\n\n"
-        "Order: single site services first, then services where Well-led is below Good.\n\n"
+        "Order: supported living first, then single site services, then services where Well-led is below Good.\n\n"
         "Each draft follows below. Read the review (link under each), then tap 'Open email': it opens in Gmail, already addressed and written. Press Send. "
         "Then reply e.g. 'sent P1 P3' so I keep track. "
         "Services without a company number or published email are marked 'call or write', because the law on "
@@ -519,6 +527,8 @@ def run(store, telegram) -> None:
         + ("\n\nPrinted letters: reply 'letters' to read today's letters, then 'post all' or 'post L1 L3' to have them printed and posted."
            if os.getenv("INTELLIPRINT_API_KEY") else "")
     )
+    if sb_msg:
+        telegram.send_message(sb_msg)
     for p in made:
         telegram.send_message(prospect_message(p))
     try:  # same prospects on LinkedIn: added to the Sendpilot CQC Radar campaign when found
@@ -533,7 +543,16 @@ def run(store, telegram) -> None:
 
 def prospect_message(p: dict) -> str:
     check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
-    how = f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
+    if p.get("salesblink"):
+        return (
+            f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
+            f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
+            f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
+            f"In the SalesBlink sequence: {p['email']} ({check}). Nothing to send by hand.\n"
+            f"CQC page: {p['cqc_page']}\n"
+            + (f"Review: {p['review_url']}\n" if p.get("review_url") else "")
+        )
+    how =f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
         "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
     return (
         f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
