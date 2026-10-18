@@ -45,6 +45,7 @@ HELP = (
     "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
     "skip L2 drops one for good.\n\n"
     "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
+    "Self-Check scores: readers who click their total at welllednetwork.com/self-check-score arrive here; 0 to 12 means call them within 24 hours.\n\n"
     "Bookings (Trafft and SAM.AI):\n"
     "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call. "
     "SAM.AI bookings are picked up from your Google Calendar within about 10 minutes (UK daytime).\n"
@@ -565,6 +566,33 @@ def everwebinar_webhook(event: str = "registered"):
         telegram.send_message(f"A webinar registration arrived but could not be read ({type(exc).__name__}). "
                               "Check Registrants in EverWebinar: https://app.webinarjam.com/my-registrants")
         return jsonify({"ok": True})
+
+
+ALLOWED_ORIGINS = {"https://www.welllednetwork.com", "https://welllednetwork.com", "null"}
+
+
+@app.route("/selfcheck/score", methods=["POST", "OPTIONS", "GET"])
+def selfcheck_score():
+    """The Self-Check score page (welllednetwork.com/self-check-score) -> Telegram alert + Brevo fields."""
+    import selfcheck_score as sc
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type",
+            "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        return ("", 204, cors)
+    if request.method == "GET":
+        return (jsonify({"ok": True, "service": "self-check score"}), 200, cors)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    try:
+        result = sc.handle(store, payload, telegram.send_message)
+    except Exception as exc:  # the reader must never see an error; tell Yeukai instead
+        telegram.send_message(f"A Self-Check score arrived but could not be processed ({type(exc).__name__}).")
+        result = {"ok": True}
+    return (jsonify(result), 200, cors)
 
 
 @app.get("/trafft/last")
