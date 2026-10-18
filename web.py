@@ -55,7 +55,12 @@ HELP = (
     "New LinkedIn replies arrive here within about 10 minutes (UK daytime), each with a drafted answer and a code like L3.\n"
     "li send L3 sends the draft exactly as shown. li say L3 <your words> sends your own. li skip L3 leaves it.\n"
     "li lists replies still waiting. Nothing is sent on LinkedIn without one of these replies.\n"
-    "Radar services whose registered manager is found on LinkedIn are added to the CQC Radar campaign automatically."
+    "Radar services whose registered manager is found on LinkedIn are added to the CQC Radar campaign automatically.\n\n"
+    "Email (SalesBlink):\n"
+    "New email replies arrive here within about 10 minutes, each with a drafted answer and a code like E3.\n"
+    "sb send E3 sends the draft exactly as shown. sb say E3 <your words> sends your own. sb skip E3 leaves it.\n"
+    "sb lists replies still waiting. Nothing is emailed without one of these replies. "
+    "Anyone who asks to be removed is blocked straight away and you are told."
 )
 
 
@@ -98,6 +103,11 @@ def handle_text(text: str) -> str:
     li = linkedin_sp.handle(text, store)
     if li is not None:
         return li
+    import sb_replies
+
+    sb = sb_replies.handle(text, store)
+    if sb is not None:
+        return sb
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -581,6 +591,12 @@ def health():
         import linkedin_sp
 
         linkedin_sp.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # and for new email replies in SalesBlink
+        import sb_replies
+
+        sb_replies.check_in_background(store, telegram.send_message)
     except Exception:
         pass
     try:  # and for free practice room tasters finished in Tough Tongue
