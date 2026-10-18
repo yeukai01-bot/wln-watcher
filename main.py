@@ -231,6 +231,15 @@ def main() -> None:
         except Exception:
             pass
     run_radar()
+    try:  # radar prospects queued for SalesBlink join the sequence once the LinkedIn head start is over
+        import salesblink_sb
+        from store import Store
+
+        msg = salesblink_sb.flush_due(Store())
+        if msg:
+            telegram.send_message(msg)
+    except Exception as exc:
+        print("salesblink flush failed:", exc)
     try:  # sam.ai care leaders looked up on LinkedIn, a batch each morning until the list is done
         import linkedin_sp
         from store import Store

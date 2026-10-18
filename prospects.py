@@ -543,12 +543,12 @@ def run(store, telegram) -> None:
 
 def prospect_message(p: dict) -> str:
     check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
-    if p.get("salesblink"):
+    if p.get("sb_queued_at"):
         return (
             f"{p['code']}. {p['location_name']} ({p['town']}, {p['region']})\n"
             f"{p['rating']}, report {p['report_date']}. {', '.join(p['weak_key_questions'])}\n"
             f"Provider: {p['provider_name']}  Phone: {p['phone'] or 'n/a'}\n"
-            f"In the SalesBlink sequence: {p['email']} ({check}). Nothing to send by hand.\n"
+            f"Queued for the SalesBlink sequence (joins {p.get('sb_due', 'in 3 days')}): {p['email']} ({check}). Nothing to send by hand.\n"
             f"CQC page: {p['cqc_page']}\n"
             + (f"Review: {p['review_url']}\n" if p.get("review_url") else "")
         )

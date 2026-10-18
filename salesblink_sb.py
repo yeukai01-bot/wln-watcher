@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 
 import requests
 
@@ -106,13 +107,18 @@ def _contact(p: dict) -> dict:
     }
 
 
+DELAY_DAYS = float(os.getenv("RADAR_SB_DELAY_DAYS", "3"))  # LinkedIn invitation goes first
+
+
 def add_radar_prospects(prospects: list[dict], store) -> str:
-    """Add qualifying radar prospects to the SalesBlink list. Marks each one so it is never added twice.
+    """Queue qualifying radar prospects for SalesBlink. They are added to the list DELAY_DAYS later
+    (by flush_due, run every morning), so the email lands after the Sendpilot LinkedIn invitation.
     Returns a short Telegram summary ('' when switched off or nothing to report)."""
     if not enabled():
         return ""
     suppressed = set(store.suppressed())
-    to_add, added_codes, skipped = [], [], {}
+    queued, skipped = [], {}
+    now = time.time()
     for p in prospects:
         key = f"sb:radar:{p.get('location_id')}"
         if store.has(key):
@@ -122,28 +128,43 @@ def add_radar_prospects(prospects: list[dict], store) -> str:
             if why != "not supported living":
                 skipped[why] = skipped.get(why, 0) + 1
             continue
-        to_add.append((p, key))
-    if not to_add and not skipped:
+        p["sb_queued_at"] = now
+        p["sb_due"] = time.strftime("%d %B", time.localtime(now + DELAY_DAYS * 86400))
+        store.add_many([key])
+        store.put_prospect(p)
+        queued.append(f"{p.get('code', '')} {p.get('location_name', '')} ({p['email']})")
+    if not queued and not skipped:
         return ""
-    added = 0
-    if to_add:
-        try:
-            _post("/contacts", {"list_id": list_id(), "contacts": [_contact(p) for p, _ in to_add],
-                                "remove_duplicates": True})
-            added = len(to_add)
-            store.add_many([k for _, k in to_add])
-            for p, _ in to_add:
-                p["salesblink"] = True
-                store.put_prospect(p)
-                added_codes.append(f"{p.get('code', '')} {p.get('location_name', '')} ({p['email']})")
-        except Exception as exc:
-            LAST_ERROR[0] = str(exc)[:300]
-    msg = f"Email (SalesBlink): added {added} supported living service{'s' if added != 1 else ''} to the CQC Radar sequence."
-    if added:
-        msg += " They get the approved emails automatically, a few days after the LinkedIn invitation. Do not email these by hand.\n"
-        msg += "\n".join(added_codes)
+    msg = (f"Email (SalesBlink): {len(queued)} supported living service{'s' if len(queued) != 1 else ''} queued for the "
+           f"CQC Radar sequence. They join it in {DELAY_DAYS:g} days, after the LinkedIn invitation, and then get the "
+           "approved emails automatically. Do not email these by hand.")
+    if queued:
+        msg += "\n" + "\n".join(queued)
     if skipped:
         msg += "\nNot added: " + "; ".join(f"{v} {k}" for k, v in skipped.items())
-    if LAST_ERROR[0] and not added and to_add:
-        msg += f"\nSalesBlink error: {LAST_ERROR[0]}"
     return msg
+
+
+def flush_due(store) -> str:
+    """Every morning: add queued prospects whose wait is over to the SalesBlink list."""
+    if not enabled():
+        return ""
+    suppressed = set(store.suppressed())
+    cutoff = time.time() - DELAY_DAYS * 86400 + 3600  # an hour's grace so the morning run never slips a day
+    due = [p for p in store.prospects()
+           if p.get("sb_queued_at") and not p.get("salesblink") and p["sb_queued_at"] <= cutoff]
+    due = [p for p in due if (p.get("email") or "").lower() not in suppressed]
+    if not due:
+        return ""
+    try:
+        for start in range(0, len(due), 500):
+            batch = due[start:start + 500]
+            _post("/contacts", {"list_id": list_id(), "contacts": [_contact(p) for p in batch], "remove_duplicates": True})
+    except Exception as exc:
+        LAST_ERROR[0] = str(exc)[:300]
+        return f"SalesBlink: could not add {len(due)} queued radar prospects today, will retry tomorrow. Error: {LAST_ERROR[0]}"
+    for p in due:
+        p["salesblink"] = True
+        store.put_prospect(p)
+    return (f"SalesBlink: {len(due)} radar prospect{'s' if len(due) != 1 else ''} joined the CQC Radar sequence today:\n"
+            + "\n".join(f"{p.get('code', '')} {p.get('location_name', '')} ({p['email']})" for p in due))
