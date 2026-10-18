@@ -50,7 +50,12 @@ HELP = (
     "SAM.AI bookings are picked up from your Google Calendar within about 10 minutes (UK daytime).\n"
     "bookings lists the calls coming up in the next two weeks.\n"
     "Every Enrolment Call booking also brings a call brief: what CQC found, what is likely underneath, how to open, questions, the offer that fits and the close.\n"
-    "brief <CQC link or service name> writes one on request."
+    "brief <CQC link or service name> writes one on request.\n\n"
+    "LinkedIn (Sendpilot):\n"
+    "New LinkedIn replies arrive here within about 10 minutes (UK daytime), each with a drafted answer and a code like L3.\n"
+    "li send L3 sends the draft exactly as shown. li say L3 <your words> sends your own. li skip L3 leaves it.\n"
+    "li lists replies still waiting. Nothing is sent on LinkedIn without one of these replies.\n"
+    "Radar services whose registered manager is found on LinkedIn are added to the CQC Radar campaign automatically."
 )
 
 
@@ -88,6 +93,11 @@ def _draft_in_background(aid: str) -> None:
 
 
 def handle_text(text: str) -> str:
+    import linkedin_sp
+
+    li = linkedin_sp.handle(text, store)
+    if li is not None:
+        return li
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -565,6 +575,12 @@ def health():
         import cal_watch
 
         cal_watch.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # and for new LinkedIn replies in Sendpilot
+        import linkedin_sp
+
+        linkedin_sp.check_in_background(store, telegram.send_message)
     except Exception:
         pass
     try:  # and for free practice room tasters finished in Tough Tongue

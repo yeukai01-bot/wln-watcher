@@ -32,6 +32,12 @@ envVarGroups:
         sync: false            # paste in Render: Tough Tongue, Developer Tools, Manage API Keys (free practice room leads)
       - key: SAM_API_TOKEN
         sync: false            # paste in Render: SAM.AI token (practice room leads + cancellation check)
+      - key: SENDPILOT_API_KEY
+        sync: false            # paste in Render: Sendpilot, Settings, API keys (LinkedIn replies + radar leads)
+      - key: SENDPILOT_RADAR_CAMPAIGN_ID
+        sync: false            # the id of the Sendpilot "CQC Radar" campaign
+      - key: SENDPILOT_SENDER_ID
+        sync: false            # Yeukai's LinkedIn sender id in Sendpilot
       - key: GMAIL_ACCOUNT
         value: kajidoricollective@gmail.com   # Open email opens Gmail compose in this account
 

@@ -521,6 +521,14 @@ def run(store, telegram) -> None:
     )
     for p in made:
         telegram.send_message(prospect_message(p))
+    try:  # same prospects on LinkedIn: added to the Sendpilot CQC Radar campaign when found
+        import linkedin_sp
+
+        li_msg = linkedin_sp.add_radar_prospects(made, store, telegram.send_message)
+        if li_msg:
+            telegram.send_message(li_msg)
+    except Exception as exc:
+        print("linkedin radar step failed:", exc)
 
 
 def prospect_message(p: dict) -> str:
