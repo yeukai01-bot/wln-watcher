@@ -61,7 +61,10 @@ HELP = (
     "New email replies arrive here within about 10 minutes, each with a drafted answer and a code like E3.\n"
     "sb send E3 sends the draft exactly as shown. sb say E3 <your words> sends your own. sb skip E3 leaves it.\n"
     "sb lists replies still waiting. Nothing is emailed without one of these replies. "
-    "Anyone who asks to be removed is blocked straight away and you are told."
+    "Anyone who asks to be removed is blocked straight away and you are told.\n\n"
+    "Gmail replies (kajidoricollective):\n"
+    "When a real person emails the inbox, an alert arrives here with who they are, what they want and a link to the email. "
+    "Automated mail is ignored. gmail key shows the key for the Make scenario."
 )
 
 
@@ -203,6 +206,10 @@ def handle_text(text: str) -> str:
         return msg
     if re.fullmatch(r"(yes|yep|ok|okay|thanks|thank you|cheers|got it|done|great|perfect|noted)[.! ]*", (text or "").strip().lower()):
         return "Noted, thank you. Type help any time to see what I can do."
+    if t in ("gmail key", "/gmailkey"):
+        import gmail_alerts
+        return ("Paste this into the Make scenario's HTTP header as Authorization: Bearer <key>\n\n"
+                + gmail_alerts.inbound_key())
     return "I did not understand that. " + HELP
 
 
@@ -593,6 +600,25 @@ def selfcheck_score():
         telegram.send_message(f"A Self-Check score arrived but could not be processed ({type(exc).__name__}).")
         result = {"ok": True}
     return (jsonify(result), 200, cors)
+
+
+@app.post("/gmail/inbound")
+def gmail_inbound():
+    """Make posts each new kajidoricollective inbox email here (from, subject, thread in the query; text as body)."""
+    import gmail_alerts
+
+    given = (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+    if not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(gmail_alerts.inbound_key(), given):
+        abort(403)
+    sender = request.args.get("from", "")
+    subject = request.args.get("subject", "")
+    thread = request.args.get("thread", "")
+    body = request.get_data(as_text=True)[:8000]
+    try:
+        result = gmail_alerts.handle(sender, subject, body, thread, telegram.send_message)
+    except Exception as exc:  # never make Make retry forever
+        result = f"error: {type(exc).__name__}"
+    return jsonify({"ok": True, "result": result})
 
 
 @app.get("/trafft/last")
