@@ -163,48 +163,47 @@ def _approve_items(app_id: int, items: list[dict]) -> str:
 
 
 def add_portal_item(app_id: int, kind: str, title: str, text: str,
-                    files: list[tuple[str, bytes, str]] | None = None) -> tuple[bool, str]:
-    """Adds a step to the guest's portal. Clustdoc creates new items hidden and titled by type,
-    so the item is created first, then made visible and titled, then any files are attached."""
+                    files: list[tuple[str, bytes, str]] | None = None, field: str = "") -> tuple[bool, str]:
+    """Adds a step to the guest's portal: graphics go in with the step (so they land in its Files),
+    the text goes in the step's instructions, and the step is then made visible and titled."""
     try:
         r = _cd("GET", f"/applications/{app_id}/application-items", params={"per_page": 100})
         if r.status_code == 200 and any((i.get("title") or "") == title for i in r.json().get("data") or []):
             return True, f"'{title}' already in their portal"
     except Exception:
         pass
-    c = _cd("POST", f"/applications/{app_id}/application-items",
-            json={"type": kind, "title": title, "comments": text, "instructions": _html(text)})
+    body = {"type": kind, "title": title, "instructions": _html(text)}
+    c, note = None, ""
+    if files:
+        headers = {"Authorization": f"Bearer {_token()}", "Accept": "application/json"}
+        for fld in ([field] if field else ["attachments[]", "files[]", "file"]):
+            c = requests.post(f"{API}/applications/{app_id}/application-items", headers=headers, data=body,
+                              files=[(fld, (n, d, m)) for n, d, m in files], timeout=120)
+            if c.status_code in (200, 201):
+                note = f"{len(files)} file(s) sent as {fld}"
+                break
+            note = f"files not accepted ({c.status_code} {c.text[:100]})"
+    if c is None or c.status_code not in (200, 201):
+        c = _cd("POST", f"/applications/{app_id}/application-items", json=body)
     if c.status_code not in (200, 201):
         return False, f"'{title}' not added ({c.status_code} {c.text[:120]})"
     iid = (c.json().get("data") or {}).get("id")
-    notes = []
+    notes = [note] if note else []
     shown = False
     for method in ("PATCH", "PUT"):
         p = _cd(method, f"/application-items/{iid}", json={"title": title, "visible_to_client": True,
-                                                            "comments": text, "instructions": _html(text)})
+                                                            "instructions": _html(text)})
         if p.status_code in (200, 201):
             shown = bool((p.json().get("data") or {}).get("visible_to_client", True))
             break
         notes.append(f"{method} {p.status_code} {p.text[:100]}")
-    if files:
-        ok, err = 0, ""
-        headers = {"Authorization": f"Bearer {_token()}", "Accept": "application/json"}
-        for name, data, mime in files:
-            for field in ("file", "files[]", "attachments[]"):
-                u = requests.post(f"{API}/application-items/{iid}/uploads", headers=headers,
-                                  files={field: (name, data, mime)}, timeout=120)
-                if u.status_code in (200, 201):
-                    ok += 1
-                    break
-                err = f"{u.status_code} {u.text[:100]}"
-        notes.append(f"{ok} of {len(files)} files attached" + (f" (last error {err})" if ok < len(files) else ""))
     vis = "visible to the guest" if shown else "ADDED BUT HIDDEN from the guest"
     return shown, f"'{title}' added to their portal, {vis}" + (f"; {'; '.join(notes)}" if notes else "")
 
 
 def _html(text: str) -> str:
     """Instructions are what the guest sees on the step; keep paragraphs and make links clickable."""
-    return "".join(f"<p>{_link(p).replace(chr(10), '<br>')}</p>" for p in text.split("\n\n"))
+    return "<p>&nbsp;</p>".join(f"<p>{_link(p).replace(chr(10), '<br>')}</p>" for p in text.split("\n\n"))
 
 
 def _add_booking_box(app_id: int) -> str:
@@ -372,17 +371,18 @@ def handle(text: str, store) -> str | None:
 
 
 def probe(app_id: int) -> str:
-    """Test run on a test application: adds the booking box and a sample promotion pack with one small image."""
+    """Test run on a test application: one sample pack per upload format, to see which fills Files."""
     import io
     from PIL import Image
     buf = io.BytesIO()
     Image.new("RGB", (540, 675), (20, 33, 61)).save(buf, "PNG")
     png = buf.getvalue()
-    a = _add_booking_box(app_id)
-    b = add_portal_item(app_id, "fileshare", "Your promotion pack (test 2)", "Test promotion pack.\n\nLINKEDIN:\nA sample caption.\n\nMarketplace: https://www.welllednetwork.com/channels/business-services-marketplace",
-                        [("test-graphic.png", png, "image/png")])[1]
-    print("[probe]", a, "|", b)
-    return f"Probe results:\n{a}\n{b}"
+    out = []
+    for fld in ("attachments[]", "files[]", "file"):
+        out.append(add_portal_item(app_id, "fileshare", f"Pack test {fld}", "Sample pack text.",
+                                   [("test-graphic.png", png, "image/png")], field=fld)[1])
+    print("[probe]", " | ".join(out))
+    return "Probe results:\n" + "\n".join(out)
 
 
 def check_in_background(store, send) -> None:
