@@ -38,7 +38,11 @@ HELP = (
     "On-topic applications are approved automatically 24 hours after submitting, and sent both booking links.\n"
     "guests shows applications waiting for your decision.\n"
     "guest approve 123 or guest decline 123 decides one (123 is the Clustdoc number in the alert).\n"
-    "recorded 123 after a session: posts, graphics, guest pack and write-up are all done for you.\n\n"
+    "recorded 123 after a session: posts, graphics, guest pack and write-up are all done for you.\n"
+    "When a guest books you get an alert; their Guest Brief (questions ready) comes the Tuesday before at 4pm.\n"
+    "briefs lists booked sessions; brief 123 resends that guest's brief.\n"
+    "waitlist add 123 puts a guest on the waiting list (when they reply \"waiting list\"); waitlist shows it; "
+    "waitlist remove 123 takes them off. A cancelled Thursday is emailed to everyone on it.\n\n"
     "Report radar (CQC outreach):\n"
     "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
@@ -133,6 +137,14 @@ def handle_text(text: str) -> str:
         ep = None
     if ep is not None:
         return ep
+    try:
+        import expert_brief
+
+        eb = expert_brief.handle(text, store, telegram.send_message)
+    except ImportError:
+        eb = None
+    if eb is not None:
+        return eb
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -699,6 +711,12 @@ def health():
         expert_promo.thursday_prompt(store, telegram.send_message)
     except Exception:
         pass
+    try:  # Expert Session bookings in the calendar: booked alert, Tuesday Guest Brief, Thursday reminder
+        import expert_brief
+
+        expert_brief.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
     return "Well-Led Network reply service is running."
 
 
@@ -740,6 +758,16 @@ def expert_sessions_check():
     if not _key_ok():
         abort(403)
     return jsonify({"result": expert_sessions.check(store, telegram.send_message, force=True)})
+
+
+@app.get("/expert-sessions/bookings")
+def expert_bookings_check():
+    """Run the Expert Session booking and Guest Brief check now (needs the X-Key header)."""
+    import expert_brief
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": expert_brief.check(store, telegram.send_message, force=True)})
 
 
 @app.get("/calendar/check")

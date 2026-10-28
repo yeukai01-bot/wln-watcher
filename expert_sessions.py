@@ -59,6 +59,8 @@ Everything in the free session, and 100% of your gift goes to Edge Housing, an O
 
 Both options give you the same session and the same welcome. Book as soon as you can, as Thursdays go quickly.
 
+The booking page shows Thursdays up to 90 days ahead. If none of those suits you, or they are all taken, just reply to this email with "waiting list". You'll be added straight away and emailed the moment a Thursday frees up, first come, first served.
+
 HOW YOUR SESSION WILL RUN (45 minutes)
 
 1. Introductions (about 5 minutes)
