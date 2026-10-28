@@ -1,0 +1,500 @@
+"""Well-Led Network Expert Sessions: everything after the recording, from one Telegram reply.
+
+Flow
+  Thursday 5pm  Telegram lists the approved guests waiting to record.
+  You reply     recorded 123      (123 = the Clustdoc number shown in the list)
+  Render then, without anything else from you:
+    1. moves the guest to stage 4 (Session recorded) in Clustdoc
+    2. reads their profile, downloads their photo, and has Claude write the posts and the write-up
+    3. designs two branded graphics (session announcement + three takeaways)
+    4. schedules the posts in AdaptlyPost: announcement next morning 8:30, takeaways 4 days later 12:30
+       (your LinkedIn, the Well-Led Network LinkedIn page, Facebook, Instagram, Threads)
+    5. emails the guest their promotion pack (both graphics attached, a ready-to-share post,
+       the dates, and a reminder to list their services in the Marketplace)
+    6. queues the write-up for the normal publishing run, and moves the guest to stage 6
+    7. when the write-up goes live: stage 7, which starts the Clustdoc thank-you and referral sequence
+  You get the graphics and a summary on Telegram, and can edit or remove any post in AdaptlyPost
+  before it goes out.
+
+Render settings (wln-secrets)
+  ADAPTLY_API_KEY      required (AdaptlyPost > Manage > API & AI Agents; posts.schedule + media.upload)
+  CLUSTDOC_API_TOKEN   already set; needs attachments:read added for guest photos
+  ADAPTLY_LINKEDIN_ME / ADAPTLY_LINKEDIN_PAGE / ADAPTLY_FACEBOOK_PAGE / ADAPTLY_INSTAGRAM / ADAPTLY_THREADS
+                       optional overrides of the connected account ids below
+"""
+from __future__ import annotations
+
+import base64
+import io
+import json
+import os
+import re
+import textwrap
+import threading
+import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import requests
+
+import expert_sessions as es
+
+UK = ZoneInfo("Europe/London")
+ADAPTLY = "https://post.adaptlypost.com/post/api/v1"
+MARKETPLACE = "https://www.welllednetwork.com/channels/business-services-marketplace"
+LOGO_URL = "https://ezycom.b-cdn.net/7/551/7cb67957e5cf/well-led-network-logo-2-mthontv1hmeh.png"
+FONT_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf"
+
+PROMO_DONE = "wln:expert_promo"        # hash app id -> summary
+ASKED = "wln:expert_asked"             # date key, once per Thursday
+
+ACCOUNTS = {
+    "linkedin_me": os.getenv("ADAPTLY_LINKEDIN_ME", "cmvb2qlrr00jk01s8upgbbeio"),
+    "linkedin_page": os.getenv("ADAPTLY_LINKEDIN_PAGE", "cmvpvi24j00bb01mvlmbkrmm1"),
+    "facebook": os.getenv("ADAPTLY_FACEBOOK_PAGE", "cmvb2tcuu00jo01s83n2dc8lf"),
+    "instagram": os.getenv("ADAPTLY_INSTAGRAM", "cmvb2udp800jp01s8lgjg96fk"),
+    "threads": os.getenv("ADAPTLY_THREADS", "cmvbhnt6q000301p1kuydyd82"),
+}
+
+NAVY, GOLD, WHITE, SOFT = (14, 42, 74), (212, 168, 67), (255, 255, 255), (214, 224, 236)
+
+COPY_SYSTEM = """You write promotion for the Well-Led Network Expert Sessions: recorded 45-minute conversations
+between Yeukai Kajidori (23 years in UK health and social care, 15 as a CQC Registered Manager) and a guest
+expert, for registered managers and care leaders in UK health and social care.
+
+Voice: British English, calm, warm, professional, first person as Yeukai. No hype, no emojis, no shaming,
+no prices, no invented facts, statistics or quotes: use only what the guest wrote in their application.
+Lead with the outcome a registered manager wants and the worry behind it, then why this guest is worth
+listening to. Make the guest the hero.
+
+Rules per platform:
+- linkedin_me: Yeukai's personal LinkedIn. 900-1200 characters. NO links at all. Name the guest in plain
+  text. End by pointing readers to Yeukai's profile ("the link is on my profile") to watch the session and
+  find the guest in the Well-Led Network Business Services Marketplace.
+- linkedin_page: the Well-Led Network company page. 500-800 characters. NO links. Same ending idea.
+- facebook: 500-900 characters, may include this link exactly: MARKETPLACE_URL
+- instagram: 400-700 characters, no links, end with "Link in bio." and 3 to 5 relevant hashtags.
+- threads: under 450 characters, no links.
+- takeaways_post_*: the same set of fields again for a second post a few days later that shares the three
+  takeaways, written as genuinely useful advice a manager can act on this week (give the how away).
+
+Return JSON only with these keys:
+{"card_topic": "the session topic in at most 9 words",
+ "takeaways": ["three takeaways, each at most 12 words"],
+ "linkedin_me": "...", "linkedin_page": "...", "facebook": "...", "instagram": "...", "threads": "...",
+ "takeaways_linkedin_me": "...", "takeaways_linkedin_page": "...", "takeaways_facebook": "...",
+ "takeaways_instagram": "...", "takeaways_threads": "...",
+ "alt_announce": "alt text for the announcement graphic", "alt_takeaways": "alt text for the takeaways graphic",
+ "guest_share_post": "a 400-700 character post the guest can share in their own voice about appearing, no links",
+ "writeup_title": "an SEO-friendly article title naming the topic and the guest",
+ "writeup_markdown": "a 600-900 word standalone Well-Led Network article in markdown introducing the guest, the problem they solve for care providers, their three takeaways explained practically, their give-back, and how to reach them; end with a short paragraph inviting readers to find the guest in the Business Services Marketplace at MARKETPLACE_URL and to join the free Well-Led Network. No H1."}"""
+
+
+# ---------------------------------------------------------------- small helpers
+def _send_photo(png: bytes, caption: str) -> None:
+    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    if not (token and chat):
+        return
+    requests.post(f"https://api.telegram.org/bot{token}/sendPhoto", timeout=60,
+                  data={"chat_id": chat, "caption": caption[:1000]}, files={"photo": ("card.png", png, "image/png")})
+
+
+def _fields(items: list[dict]) -> dict:
+    """Profile answers keyed by a short lower-case label."""
+    out = {}
+    for line in es._answers(items).split("\n"):
+        if ":" in line and not line.startswith("["):
+            k, v = line.split(":", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def _pick(fields: dict, *words: str) -> str:
+    for k, v in fields.items():
+        if all(w in k for w in words):
+            return v
+    return ""
+
+
+def _download(url: str) -> bytes | None:
+    try:
+        r = requests.get(url, timeout=60, headers={"Authorization": f"Bearer {es._token()}"})
+        return r.content if r.status_code == 200 and len(r.content) > 1000 else None
+    except Exception:
+        return None
+
+
+def _guest_file(items: list[dict], word: str) -> bytes | None:
+    for it in items:
+        if word in str(it.get("title", "")).lower() and it.get("type") in ("file", "fileshare", "custom", None):
+            r = es._cd("GET", f"/application-items/{it['id']}/uploads")
+            if r.status_code != 200:
+                continue
+            for up in r.json().get("data") or []:
+                data = _download(up.get("download_url") or up.get("url") or "")
+                if data:
+                    return data
+    return None
+
+
+# ---------------------------------------------------------------- graphics
+_font_cache: dict = {}
+
+
+def _font(size: int, bold: bool = False):
+    from PIL import ImageFont
+
+    key = (size, bold)
+    if key in _font_cache:
+        return _font_cache[key]
+    path = "/tmp/montserrat.ttf"
+    try:
+        if not os.path.exists(path):
+            r = requests.get(FONT_URL, timeout=30)
+            r.raise_for_status()
+            open(path, "wb").write(r.content)
+        f = ImageFont.truetype(path, size)
+        try:
+            f.set_variation_by_name("Bold" if bold else "Regular")
+        except Exception:
+            pass
+    except Exception:
+        f = ImageFont.load_default(size=size)
+    _font_cache[key] = f
+    return f
+
+
+def _wrap(draw, text: str, font, width: int) -> list[str]:
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if draw.textlength(t, font=font) <= width:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _canvas():
+    from PIL import Image, ImageDraw
+
+    W, H = 1080, 1350
+    img = Image.new("RGB", (W, H), NAVY)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, W, 14], fill=GOLD)
+    d.rectangle([0, H - 110, W, H], fill=(10, 30, 54))
+    d.text((W // 2, H - 55), "Find this expert in the Well-Led Business Services Marketplace", font=_font(28),
+           fill=SOFT, anchor="mm")
+    return img, d, W, H
+
+
+_logo_cache: list = []
+
+
+def _logo():
+    from PIL import Image
+
+    if not _logo_cache:
+        try:
+            logo = Image.open(io.BytesIO(requests.get(LOGO_URL, timeout=30).content)).convert("RGBA")
+            logo.thumbnail((360, 120))
+            pad = Image.new("RGBA", (logo.width + 40, logo.height + 24), (255, 255, 255, 255))
+            pad.paste(logo, (20, 12), logo)
+            _logo_cache.append(pad)
+        except Exception:
+            _logo_cache.append(None)
+    return _logo_cache[0]
+
+
+def _layout(blocks, W, H):
+    """blocks: list of (height, draw_fn(y)). Centres the whole stack between the top bar and the footer."""
+    top, bottom = 14, H - 110
+    total = sum(h for h, _ in blocks)
+    y = top + max(30, (bottom - top - total) // 2)
+    for h, fn in blocks:
+        fn(y)
+        y += h
+
+
+def _header_blocks(img, d, W, label: str):
+    logo = _logo()
+    blocks = []
+    if logo is not None:
+        blocks.append((logo.height + 40, lambda y: img.paste(logo, ((W - logo.width) // 2, y), logo)))
+    else:
+        blocks.append((80, lambda y: d.text((W // 2, y + 30), "The Well-Led Network", font=_font(48, True),
+                                            fill=WHITE, anchor="mm")))
+    blocks.append((80, lambda y: d.text((W // 2, y + 20), label.upper(), font=_font(34, True), fill=GOLD,
+                                        anchor="mm")))
+    return blocks
+
+
+def _text_block(d, W, text, font, colour, width, max_lines, lh, after=0):
+    lines = _wrap(d, text, font, width)[:max_lines]
+
+    def draw(y):
+        for i, line in enumerate(lines):
+            d.text((W // 2, y + i * lh + lh // 2), line, font=font, fill=colour, anchor="mm")
+    return (len(lines) * lh + after, draw)
+
+
+def announce_card(name: str, role: str, topic: str, photo: bytes | None) -> bytes:
+    from PIL import Image, ImageDraw, ImageOps
+
+    img, d, W, H = _canvas()
+    blocks = _header_blocks(img, d, W, "Expert Session")
+    size = 440
+    if photo:
+        try:
+            p = ImageOps.fit(Image.open(io.BytesIO(photo)).convert("RGB"), (size, size))
+            mask = Image.new("L", (size, size), 0)
+            ImageDraw.Draw(mask).ellipse([0, 0, size, size], fill=255)
+            ring = Image.new("RGB", (size + 18, size + 18), GOLD)
+            rmask = Image.new("L", ring.size, 0)
+            ImageDraw.Draw(rmask).ellipse([0, 0, ring.width, ring.height], fill=255)
+
+            def draw_photo(y):
+                img.paste(ring, ((W - ring.width) // 2, y), rmask)
+                img.paste(p, ((W - size) // 2, y + 9), mask)
+            blocks.append((size + 18 + 40, draw_photo))
+        except Exception:
+            pass
+    blocks.append(_text_block(d, W, name, _font(68, True), WHITE, 960, 2, 80, 4))
+    blocks.append(_text_block(d, W, role, _font(34), SOFT, 900, 2, 46, 26))
+    blocks.append((44, lambda y: d.line([W // 2 - 90, y + 10, W // 2 + 90, y + 10], fill=GOLD, width=5)))
+    blocks.append(_text_block(d, W, topic, _font(56, True), WHITE, 940, 3, 70))
+    _layout(blocks, W, H)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def takeaways_card(name: str, topic: str, takeaways: list[str]) -> bytes:
+    img, d, W, H = _canvas()
+    blocks = _header_blocks(img, d, W, "Three takeaways")
+    blocks.append(_text_block(d, W, topic, _font(54, True), WHITE, 960, 3, 68, 6))
+    blocks.append(_text_block(d, W, f"with {name}", _font(36), SOFT, 900, 1, 48, 50))
+    f = _font(44)
+    for i, t in enumerate(takeaways[:3], 1):
+        lines = _wrap(d, t, f, 760)[:3]
+        h = max(96, len(lines) * 58) + 46
+
+        def draw(y, i=i, lines=lines):
+            d.ellipse([90, y, 172, y + 82], fill=GOLD)
+            d.text((131, y + 41), str(i), font=_font(46, True), fill=NAVY, anchor="mm")
+            for j, line in enumerate(lines):
+                d.text((205, y + 12 + j * 58), line, font=f, fill=WHITE)
+        blocks.append((h, draw))
+    _layout(blocks, W, H)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------- AdaptlyPost
+def _ad(method: str, path: str, **kw):
+    return requests.request(method, f"{ADAPTLY}{path}", timeout=60,
+                            headers={"Authorization": f"Bearer {os.getenv('ADAPTLY_API_KEY', '').strip()}",
+                                     "Content-Type": "application/json"}, **kw)
+
+
+def _upload(png: bytes, name: str) -> str:
+    r = _ad("POST", "/upload-urls", json={"files": [{"fileName": name, "mimeType": "image/png"}]})
+    r.raise_for_status()
+    u = r.json()["urls"][0]
+    p = requests.put(u["uploadUrl"], data=png, headers={"Content-Type": "image/png"}, timeout=120)
+    p.raise_for_status()
+    return u["publicUrl"]
+
+
+def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime) -> list[str]:
+    at = when.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    base = {"contentType": "IMAGE", "mediaUrls": [media], "mediaAltTexts": [alt[:990]],
+            "timezone": "Europe/London", "scheduledAt": at}
+    results = []
+    jobs = [
+        ({**base, "platforms": ["LINKEDIN", "FACEBOOK", "INSTAGRAM", "THREADS"],
+          "text": texts[prefix + "linkedin_me"],
+          "platformTexts": [{"platform": "FACEBOOK", "text": texts[prefix + "facebook"]},
+                            {"platform": "INSTAGRAM", "text": texts[prefix + "instagram"]},
+                            {"platform": "THREADS", "text": texts[prefix + "threads"]}],
+          "linkedinConnectionIds": [ACCOUNTS["linkedin_me"]], "pageIds": [ACCOUNTS["facebook"]],
+          "instagramConnectionIds": [ACCOUNTS["instagram"]], "threadsConnectionIds": [ACCOUNTS["threads"]]},
+         "your LinkedIn, Facebook, Instagram, Threads"),
+        ({**base, "platforms": ["LINKEDIN"], "text": texts[prefix + "linkedin_page"],
+          "linkedinConnectionIds": [ACCOUNTS["linkedin_page"]]}, "Well-Led Network LinkedIn page"),
+    ]
+    for body, label in jobs:
+        r = _ad("POST", "/social-posts", json=body)
+        if r.status_code in (200, 201):
+            results.append(f"{label}: scheduled {when.strftime('%a %d %b %H:%M')}")
+        else:
+            results.append(f"{label}: NOT scheduled ({r.status_code}: {r.text[:160]})")
+    return results
+
+
+# ---------------------------------------------------------------- email the guest their pack
+def _email_pack(contact: dict, texts: dict, when1: datetime, when2: datetime, cards: list[tuple[str, bytes]]) -> str:
+    key = os.getenv("BREVO_API_KEY", "").strip()
+    to = (contact or {}).get("email")
+    if not (key and to):
+        return "guest not emailed (no Brevo key or no email address)"
+    first = contact.get("firstname") or ""
+    body = (f"Hi {first},\n\nThank you for your Expert Session. It was a real pleasure, and I know registered managers "
+            f"and care leaders will take a lot from it.\n\nYour promotion pack is attached: two graphics made for you. "
+            f"We are sharing your session on {when1.strftime('%A %d %B')} and your three takeaways on "
+            f"{when2.strftime('%A %d %B')}, across LinkedIn, Facebook, Instagram and Threads.\n\n"
+            f"Two things that make the biggest difference:\n\n"
+            f"1. Share it with your own network. Here is a post you can use or adapt:\n\n{texts['guest_share_post']}\n\n"
+            f"2. Make sure your services are listed in the Well-Led Business Services Marketplace, as that is where "
+            f"we send everyone who wants to work with you:\n{MARKETPLACE}\n\n"
+            f"Thank you again for giving your time and expertise back to the sector.\n\n"
+            f"Warm regards\nYeukai Kajidori\nThe Kajidori Collective\nhttps://www.welllednetwork.com/blog")
+    html = "<br>".join(es._link(l) for l in body.split("\n"))
+    r = requests.post("https://api.brevo.com/v3/smtp/email", timeout=60,
+                      headers={"api-key": key, "accept": "application/json", "content-type": "application/json"},
+                      json={"sender": {"name": "Yeukai Kajidori, Well-Led Network",
+                                       "email": os.getenv("EXPERT_SENDER_EMAIL", "support@welllednetwork.com")},
+                            "to": [{"email": to}], "replyTo": {"email": "kajidoricollective@gmail.com"},
+                            "subject": "Your Expert Session promotion pack",
+                            "textContent": body, "htmlContent": html,
+                            "attachment": [{"name": n, "content": base64.b64encode(b).decode()} for n, b in cards]})
+    return "guest emailed their promotion pack" if r.status_code in (200, 201) else f"guest email not sent ({r.status_code}: {r.text[:120]})"
+
+
+# ---------------------------------------------------------------- the main job
+def _stage(app_id: int, stage: str) -> str:
+    try:
+        r = es._cd("PATCH", f"/applications/{app_id}", json={"stage": stage})
+        return "" if r.status_code == 200 else f"stage '{stage[:2]}' not set ({r.status_code})"
+    except Exception as exc:
+        return f"stage not set ({exc})"
+
+
+def _next_at(base: datetime, days: int, hh: int, mm: int) -> datetime:
+    return (base + timedelta(days=days)).replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+
+def run(store, send, app_id: int) -> str:
+    import ai
+
+    notes = []
+    r = es._cd("GET", f"/applications/{app_id}")
+    if r.status_code != 200:
+        return f"Couldn't open Clustdoc application {app_id} ({r.status_code})."
+    app = r.json().get("data") or {}
+    contact = app.get("contact") or {}
+    items = es._items(app_id)
+    notes.append(_stage(app_id, "4. Session recorded"))
+    f = _fields(items)
+    name = _pick(f, "name", "shown") or es._name(app)
+    role = ", ".join(x for x in (_pick(f, "job title"), _pick(f, "organisation name")) if x)
+    answers = es._answers(items)
+
+    reply = ai._ask(COPY_SYSTEM.replace("MARKETPLACE_URL", MARKETPLACE),
+                    f"Guest: {name}\nRole: {role}\n\nTheir application:\n{answers}", max_tokens=8000)
+    texts = ai._json(reply)
+
+    photo = _guest_file(items, "photo")
+    if not photo:
+        notes.append("no guest photo found (add attachments:read to the Clustdoc token), graphic made without it")
+    card1 = announce_card(name, role, texts["card_topic"], photo)
+    card2 = takeaways_card(name, texts["card_topic"], texts["takeaways"])
+    _send_photo(card1, f"Expert Session graphic 1 of 2: {name}")
+    _send_photo(card2, "Graphic 2 of 2: three takeaways")
+
+    now = datetime.now(UK)
+    when1 = _next_at(now, 1, 8, 30)
+    when2 = _next_at(now, 5, 12, 30)
+    if not os.getenv("ADAPTLY_API_KEY", "").strip():
+        notes.append("posts NOT scheduled: ADAPTLY_API_KEY is not set in Render")
+    else:
+        try:
+            m1 = _upload(card1, f"expert-{app_id}-session.png")
+            m2 = _upload(card2, f"expert-{app_id}-takeaways.png")
+            notes += _schedule(texts, "", m1, texts.get("alt_announce", ""), when1)
+            notes += _schedule(texts, "takeaways_", m2, texts.get("alt_takeaways", ""), when2)
+        except Exception as exc:
+            notes.append(f"AdaptlyPost problem: {str(exc)[:200]}")
+
+    notes.append(_email_pack(contact, texts, when1, when2,
+                             [("expert-session.png", card1), ("three-takeaways.png", card2)]))
+
+    today = now.strftime("%Y-%m-%d")
+    a = store.put_approval({
+        "number": 900 + (app_id % 100), "headline": texts["writeup_title"], "date": today,
+        "angle": "Expert Session write-up", "product": "", "lead_magnet": "", "key_date": "",
+        "source": "Expert Session", "source_title": name, "url": MARKETPLACE,
+        "draft": "# " + texts["writeup_title"] + "\n\n" + texts["writeup_markdown"],
+        "status": "approved", "approved_at": int(time.time()), "expert_app_id": app_id,
+    })
+    notes.append(f"write-up queued for the next publishing run (topic {a['number']})")
+    notes.append(_stage(app_id, "6. Promotion scheduled - LinkedIn and socials"))
+    if store.r:
+        store.r.hset(PROMO_DONE, str(app_id), today)
+    summary = (f"Expert Session with {name} is in motion.\n" + "\n".join("- " + n for n in notes if n) +
+               "\n\nYou can edit or remove any post in AdaptlyPost before it goes out. When the write-up is live,"
+               " the guest moves to stage 7 and the Clustdoc thank-you and referral sequence starts.")
+    send(summary)
+    return summary
+
+
+def on_writeup_published(store, a: dict, send) -> None:
+    app_id = a.get("expert_app_id")
+    if not app_id:
+        return
+    _stage(app_id, "5. Live on Well-Led Network + Marketplace listing")
+    msg = _stage(app_id, "7. Write-up published")
+    send(f"Expert Session write-up is live, so the guest is now at stage 7 and the Clustdoc thank-you and "
+         f"referral sequence has started." + (f"\n{msg}" if msg else ""))
+
+
+# ---------------------------------------------------------------- Telegram
+def waiting_list(store) -> list[tuple[str, str]]:
+    if not store.r:
+        return []
+    approved = [k for k, v in store.r.hgetall(es.DONE).items() if v.startswith("approved")]
+    done = store.r.hgetall(PROMO_DONE)
+    return [(k, store.r.hget(es.DONE, k)) for k in approved if k not in done]
+
+
+def thursday_prompt(store, send) -> None:
+    now = datetime.now(UK)
+    if now.weekday() != 3 or now.hour != 17 or not store.r or not es._token():
+        return
+    if not store.r.set(f"{ASKED}:{now:%Y%m%d}", "1", nx=True, ex=86400):
+        return
+    waiting = waiting_list(store)
+    if not waiting:
+        return
+    lines = []
+    for k, _ in waiting:
+        r = es._cd("GET", f"/applications/{k}")
+        nm = es._name(r.json().get("data") or {}) if r.status_code == 200 else "guest"
+        lines.append(f"{k}: {nm}")
+    send("Expert Session check-in. Approved guests who haven't recorded yet:\n" + "\n".join(lines) +
+         "\n\nAfter today's recording, reply: recorded 123 (with that guest's number) and I'll do the rest.")
+
+
+def handle(text: str, store, send) -> str | None:
+    m = re.match(r"^recorded\s+(\d+)$", text.strip().lower())
+    if not m:
+        return None
+    app_id = int(m.group(1))
+    if store.r and store.r.hexists(PROMO_DONE, str(app_id)):
+        return f"{app_id} has already been promoted. Nothing done."
+    if not es._token():
+        return "CLUSTDOC_API_TOKEN isn't set in Render."
+    threading.Thread(target=lambda: _safe(store, send, app_id), daemon=True).start()
+    return f"On it. Writing the posts and designing the graphics for {app_id} now; you'll get them here in a few minutes."
+
+
+def _safe(store, send, app_id: int) -> None:
+    try:
+        run(store, send, app_id)
+    except Exception as exc:
+        send(f"Expert Session promotion for {app_id} hit a problem: {type(exc).__name__}: {str(exc)[:300]}")
