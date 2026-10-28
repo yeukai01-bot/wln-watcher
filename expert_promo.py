@@ -85,7 +85,9 @@ Return JSON only with these keys:
  "takeaways_linkedin_me": "...", "takeaways_linkedin_page": "...", "takeaways_facebook": "...",
  "takeaways_instagram": "...", "takeaways_threads": "...",
  "alt_announce": "alt text for the announcement graphic", "alt_takeaways": "alt text for the takeaways graphic",
- "guest_share_post": "a 400-700 character post the guest can share in their own voice about appearing, no links",
+ "guest_linkedin": "the guest's own LinkedIn post about appearing, in their voice, 600-1000 characters, no links, mentions Yeukai Kajidori and the Well-Led Network by name and ends inviting people to find them in the Well-Led Network Business Services Marketplace",
+ "guest_facebook": "the guest's own Facebook post, 400-700 characters, may end with this link exactly: MARKETPLACE_URL",
+ "guest_instagram": "the guest's own Instagram caption, 300-500 characters, no links, ends with 3 to 5 relevant hashtags",
  "writeup_title": "an SEO-friendly article title naming the topic and the guest",
  "writeup_markdown": "a 600-900 word standalone Well-Led Network article in markdown introducing the guest, the problem they solve for care providers, their three takeaways explained practically, their give-back, and how to reach them; end with a short paragraph inviting readers to find the guest in the Business Services Marketplace at MARKETPLACE_URL and to join the free Well-Led Network. No H1."}"""
 
@@ -341,10 +343,21 @@ def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime) ->
 def _portal_pack(app_id: int, texts: dict, when1: datetime, when2: datetime, cards: list[tuple[str, bytes]]) -> str:
     """Puts the graphics and a ready-to-post caption in the guest's Clustdoc portal. Clustdoc's own
     'Your promotion pack' email (3 days after stage 7) tells them to log in and download it, so no email here."""
-    text = (f"Your Expert Session promotion pack. We are sharing your session on {when1.strftime('%A %d %B')} and "
-            f"your three takeaways on {when2.strftime('%A %d %B')}. Download the two graphics below, and use or adapt "
-            f"this post to share it with your own network:\n\n{texts['guest_share_post']}\n\n"
-            f"Please make sure your services are listed in the Business Services Marketplace: {MARKETPLACE}")
+    d1, d2 = when1.strftime('%A %d %B'), when2.strftime('%A %d %B')
+    text = (f"YOUR EXPERT SESSION PROMOTION PACK\n\n"
+            f"Two graphics are attached below. Both are sized to work on LinkedIn, Facebook and Instagram.\n"
+            f"- expert-session.png: post this first, on or after {d1}.\n"
+            f"- three-takeaways.png: post this a few days later, on or after {d2}.\n\n"
+            f"We share your session on our channels on those same dates, so posting on or after them means "
+            f"your audience and ours see it together.\n\n"
+            f"LINKEDIN (attach expert-session.png, tag Yeukai Kajidori and The Well-Led Network page):\n"
+            f"{texts.get('guest_linkedin') or texts.get('guest_share_post', '')}\n\n"
+            f"FACEBOOK (attach expert-session.png):\n{texts.get('guest_facebook', '')}\n\n"
+            f"INSTAGRAM (attach expert-session.png, tag @yeukaik):\n{texts.get('guest_instagram', '')}\n\n"
+            f"For the second post, use three-takeaways.png with a line in your own words about the takeaway that "
+            f"matters most to you.\n\n"
+            f"ONE MORE THING: make sure your services are listed in the Business Services Marketplace, as that is "
+            f"where we send everyone who wants to work with you: {MARKETPLACE}")
     headers = {"Authorization": f"Bearer {es._token()}", "Accept": "application/json"}
     files = [("attachments[]", (n, b, "image/png")) for n, b in cards]
     data = {"type": "fileshare", "title": "Your promotion pack", "reference": "promotion-pack",
