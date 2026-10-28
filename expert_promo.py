@@ -358,30 +358,9 @@ def _portal_pack(app_id: int, texts: dict, when1: datetime, when2: datetime, car
             f"matters most to you.\n\n"
             f"ONE MORE THING: make sure your services are listed in the Business Services Marketplace, as that is "
             f"where we send everyone who wants to work with you: {MARKETPLACE}")
-    headers = {"Authorization": f"Bearer {es._token()}", "Accept": "application/json"}
-    files = [("attachments[]", (n, b, "image/png")) for n, b in cards]
-    data = {"type": "fileshare", "title": "Your promotion pack", "reference": "promotion-pack",
-            "comments": text, "visible_to_client": "1"}
     try:
-        r = requests.post(f"{es.API}/applications/{app_id}/application-items", headers=headers, data=data,
-                          files=files, timeout=120)
-        if r.status_code in (200, 201):
-            return "promotion pack (graphics + caption) added to the guest's portal"
-        if r.status_code == 422 and "reference" in r.text:
-            return "promotion pack already in the guest's portal"
-        # fall back: a text box with the caption, then the graphics uploaded to it
-        t = es._cd("POST", f"/applications/{app_id}/application-items",
-                   json={"type": "custom", "title": "Your promotion pack", "reference": "promotion-pack-2",
-                         "comments": text, "visible_to_client": True, "is_mandatory": False})
-        if t.status_code not in (200, 201):
-            return f"promotion pack NOT added to the portal ({r.status_code}/{t.status_code}); graphics are in Telegram"
-        item = t.json().get("data", {}).get("id")
-        ok = 0
-        for n, b in cards:
-            u = requests.post(f"{es.API}/application-items/{item}/uploads", headers=headers,
-                              files={"file": (n, b, "image/png")}, timeout=120)
-            ok += u.status_code in (200, 201)
-        return f"promotion pack added to the guest's portal ({ok} of {len(cards)} graphics uploaded)"
+        return es.add_portal_item(app_id, "fileshare", "Your promotion pack", text,
+                                  [(n, b, "image/png") for n, b in cards])[1]
     except Exception as exc:
         return f"promotion pack NOT added to the portal ({str(exc)[:120]}); graphics are in Telegram"
 
