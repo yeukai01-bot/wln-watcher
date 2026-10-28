@@ -313,7 +313,8 @@ def _upload(png: bytes, name: str) -> str:
     return u["publicUrl"]
 
 
-def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime) -> list[str]:
+def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime,
+              check_only: bool = False) -> list[str]:
     at = when.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     base = {"contentType": "IMAGE", "mediaUrls": [media], "mediaAltTexts": [alt[:990]],
             "timezone": "Europe/London", "scheduledAt": at}
@@ -331,6 +332,17 @@ def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime) ->
           "linkedinConnectionIds": [ACCOUNTS["linkedin_page"]]}, "Well-Led Network LinkedIn page"),
     ]
     for body, label in jobs:
+        if check_only:
+            r = _ad("POST", "/social-posts/validate", json=body)
+            if r.status_code in (200, 201):
+                rep = r.json() if r.text else {}
+                ok = rep.get("valid", True)
+                probs = "; ".join(i.get("message", "") for i in (rep.get("issues") or [])[:3])
+                results.append(f"{label}: {'would schedule fine' if ok else 'PROBLEM'} for "
+                               f"{when.strftime('%a %d %b %H:%M')}" + (f" ({probs})" if probs else ""))
+            else:
+                results.append(f"{label}: check not available ({r.status_code}: {r.text[:120]}), nothing created")
+            continue
         r = _ad("POST", "/social-posts", json=body)
         if r.status_code in (200, 201):
             results.append(f"{label}: scheduled {when.strftime('%a %d %b %H:%M')}")
@@ -365,6 +377,31 @@ def _portal_pack(app_id: int, texts: dict, when1: datetime, when2: datetime, car
         return f"promotion pack NOT added to the portal ({str(exc)[:120]}); graphics are in Telegram"
 
 
+def _send_writeup(texts: dict, name: str) -> None:
+    """Test runs: every post and the full write-up to Telegram, in readable pieces."""
+    token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+    if not (token and chat):
+        return
+    posts = [("Your LinkedIn", "linkedin_me"), ("Well-Led Network LinkedIn page", "linkedin_page"),
+             ("Facebook", "facebook"), ("Instagram", "instagram"), ("Threads", "threads")]
+    parts = ["POSTS - day after recording, with graphic 1:\n\n" +
+             "\n\n".join(f"[{lab}]\n{texts.get(k, '')}" for lab, k in posts),
+             "POSTS - four days later, with graphic 2:\n\n" +
+             "\n\n".join(f"[{lab}]\n{texts.get('takeaways_' + k, '')}" for lab, k in posts),
+             "GUEST'S OWN POSTS (in their promotion pack):\n\n[LinkedIn]\n" + texts.get("guest_linkedin", "") +
+             "\n\n[Facebook]\n" + texts.get("guest_facebook", "") + "\n\n[Instagram]\n" + texts.get("guest_instagram", ""),
+             "WRITE-UP for the Well-Led Network:\n\n# " + texts.get("writeup_title", "") + "\n\n" +
+             texts.get("writeup_markdown", "")]
+    for part in parts:
+        while part:
+            cut = part[:4000]
+            if len(part) > 4000 and "\n" in cut:
+                cut = cut[:cut.rfind("\n")]
+            requests.post(f"https://api.telegram.org/bot{token}/sendMessage", timeout=60,
+                          data={"chat_id": chat, "text": cut, "disable_web_page_preview": "true"})
+            part = part[len(cut):].lstrip("\n")
+
+
 # ---------------------------------------------------------------- the main job
 def _stage(app_id: int, stage: str) -> str:
     try:
@@ -378,7 +415,8 @@ def _next_at(base: datetime, days: int, hh: int, mm: int) -> datetime:
     return (base + timedelta(days=days)).replace(hour=hh, minute=mm, second=0, microsecond=0)
 
 
-def run(store, send, app_id: int) -> str:
+def run(store, send, app_id: int, test: bool = False) -> str:
+    """test=True: a full rehearsal that posts nothing, moves no stages and publishes nothing."""
     import ai
 
     notes = []
@@ -388,7 +426,8 @@ def run(store, send, app_id: int) -> str:
     app = r.json().get("data") or {}
     contact = app.get("contact") or {}
     items = es._items(app_id)
-    notes.append(_stage(app_id, "4. Session recorded"))
+    if not test:
+        notes.append(_stage(app_id, "4. Session recorded"))
     f = _fields(items)
     name = _pick(f, "name", "shown") or es._name(app)
     role = ", ".join(x for x in (_pick(f, "job title"), _pick(f, "organisation name")) if x)
@@ -411,6 +450,14 @@ def run(store, send, app_id: int) -> str:
     when2 = _next_at(now, 5, 12, 30)
     if not os.getenv("ADAPTLY_API_KEY", "").strip():
         notes.append("posts NOT scheduled: ADAPTLY_API_KEY is not set in Render")
+    elif test:
+        try:
+            m1 = _upload(card1, f"expert-{app_id}-session-test.png")
+            notes.append("AdaptlyPost: connected, graphic uploaded fine")
+            notes += _schedule(texts, "", m1, texts.get("alt_announce", ""), when1, check_only=True)
+            notes += _schedule(texts, "takeaways_", m1, texts.get("alt_takeaways", ""), when2, check_only=True)
+        except Exception as exc:
+            notes.append(f"AdaptlyPost problem: {str(exc)[:200]}")
     else:
         try:
             m1 = _upload(card1, f"expert-{app_id}-session.png")
@@ -424,6 +471,13 @@ def run(store, send, app_id: int) -> str:
                               [("expert-session.png", card1), ("three-takeaways.png", card2)]))
 
     today = now.strftime("%Y-%m-%d")
+    if test:
+        _send_writeup(texts, name)
+        summary = ("TEST RUN for " + name + " (nothing posted, no stages moved, nothing published).\n"
+                   + "\n".join("- " + n for n in notes if n)
+                   + "\n\nAbove: both graphics, every post as it would go out, and the full write-up.")
+        send(summary)
+        return summary
     a = store.put_approval({
         "number": 900 + (app_id % 100), "headline": texts["writeup_title"], "date": today,
         "angle": "Expert Session write-up", "product": "", "lead_magnet": "", "key_date": "",
@@ -506,6 +560,12 @@ def thursday_prompt(store, send) -> None:
 
 
 def handle(text: str, store, send) -> str | None:
+    t = re.match(r"^recorded\s+test\s+(\d+)$", text.strip().lower())
+    if t:
+        app_id = int(t.group(1))
+        threading.Thread(target=lambda: _safe(store, send, app_id, True), daemon=True).start()
+        return (f"Test run for {app_id}: writing the posts, graphics and write-up now. Nothing will be posted "
+                "or published; you'll get everything here in a few minutes.")
     m = re.match(r"^recorded\s+(\d+)$", text.strip().lower())
     if not m:
         return None
@@ -518,8 +578,8 @@ def handle(text: str, store, send) -> str | None:
     return f"On it. Writing the posts and designing the graphics for {app_id} now; you'll get them here in a few minutes."
 
 
-def _safe(store, send, app_id: int) -> None:
+def _safe(store, send, app_id: int, test: bool = False) -> None:
     try:
-        run(store, send, app_id)
+        run(store, send, app_id, test)
     except Exception as exc:
         send(f"Expert Session promotion for {app_id} hit a problem: {type(exc).__name__}: {str(exc)[:300]}")
