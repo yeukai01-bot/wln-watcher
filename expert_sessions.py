@@ -58,7 +58,29 @@ Option 2, Gift a Home (a charitable gift, amount shown on the booking page):
 {GIFT_URL}
 Everything in the free session, and 100% of your gift goes to Edge Housing, an Oxford charity giving homes to people who are homeless. In health and social care we spend our working lives supporting people at their most vulnerable; this is a simple way to carry that care beyond our own services. Contributing guests also receive a promotion pack, the edited recording, a written feature linking to your organisation and, where there's a genuine fit, a warm introduction.
 
-Both options give you the same session and the same welcome. Book as soon as you can, as Thursdays go quickly."""
+Both options give you the same session and the same welcome. Book as soon as you can, as Thursdays go quickly.
+
+HOW YOUR SESSION WILL RUN (45 minutes)
+
+1. Introductions (about 5 minutes)
+Yeukai welcomes you and introduces you to the audience. You share a little about who you are and the work you do.
+
+2. Your biggest takeaway (about 5 minutes)
+The one thing you most want viewers and listeners to walk away with.
+
+3. A story from practice (about 10 minutes)
+A real example of how this has been applied in a similar care setting, what changed as a result, and how viewers and listeners can apply it in their own situation.
+
+4. Your teaching slot (about 15 minutes)
+Your time to showcase your expertise in depth. You are welcome to share your screen to show slides, a tool, an app or a template.
+
+5. Questions (about 7 minutes)
+Yeukai puts the questions care leaders most often ask on your topic to you.
+
+6. How people can reach you (about 3 minutes)
+Where people can find you and work with you, including your listing in the Well-Led Business Services Marketplace.
+
+To prepare: think about your one big takeaway and your story from practice. If you plan to share your screen, have it open and ready before we start. The session takes place in Vectera, in your browser, with nothing to install, and the link is in your booking confirmation."""
 
 CHECK_SYSTEM = """You screen guest applications for the Well-Led Network Expert Sessions, recorded conversations
 for registered managers and care leaders in UK health and social care.
