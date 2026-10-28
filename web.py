@@ -37,7 +37,8 @@ HELP = (
     "Expert Sessions (Clustdoc guests):\n"
     "On-topic applications are approved automatically 24 hours after submitting, and sent both booking links.\n"
     "guests shows applications waiting for your decision.\n"
-    "guest approve 123 or guest decline 123 decides one (123 is the Clustdoc number in the alert).\n\n"
+    "guest approve 123 or guest decline 123 decides one (123 is the Clustdoc number in the alert).\n"
+    "recorded 123 after a session: posts, graphics, guest pack and write-up are all done for you.\n\n"
     "Report radar (CQC outreach):\n"
     "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
@@ -124,6 +125,14 @@ def handle_text(text: str) -> str:
         ex = None
     if ex is not None:
         return ex
+    try:
+        import expert_promo
+
+        ep = expert_promo.handle(text, store, telegram.send_message)
+    except ImportError:
+        ep = None
+    if ep is not None:
+        return ep
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -484,6 +493,13 @@ def mark_done(aid: str):
         )
     else:
         telegram.send_message(f"Not published: {a['headline']}\n{a['note']}")
+    if a["status"] == "published" and a.get("expert_app_id"):
+        try:
+            import expert_promo
+
+            expert_promo.on_writeup_published(store, a, telegram.send_message)
+        except Exception as exc:
+            print("expert promo stage 7 failed:", exc)
     return jsonify({"ok": True})
 
 
@@ -675,6 +691,12 @@ def health():
         import expert_sessions
 
         expert_sessions.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # Thursday 5pm: ask which approved guest has just recorded
+        import expert_promo
+
+        expert_promo.thursday_prompt(store, telegram.send_message)
     except Exception:
         pass
     return "Well-Led Network reply service is running."
