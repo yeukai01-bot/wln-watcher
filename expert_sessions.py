@@ -162,15 +162,48 @@ def _approve_items(app_id: int, items: list[dict]) -> str:
     return f"{ok} of {len(ids)} items approved"
 
 
+def add_portal_item(app_id: int, kind: str, title: str, text: str,
+                    files: list[tuple[str, bytes, str]] | None = None) -> tuple[bool, str]:
+    """Adds a step to the guest's portal. Clustdoc creates new items hidden and titled by type,
+    so the item is created first, then made visible and titled, then any files are attached."""
+    try:
+        r = _cd("GET", f"/applications/{app_id}/application-items", params={"per_page": 100})
+        if r.status_code == 200 and any((i.get("title") or "") == title for i in r.json().get("data") or []):
+            return True, f"'{title}' already in their portal"
+    except Exception:
+        pass
+    c = _cd("POST", f"/applications/{app_id}/application-items",
+            json={"type": kind, "title": title, "comments": text})
+    if c.status_code not in (200, 201):
+        return False, f"'{title}' not added ({c.status_code} {c.text[:120]})"
+    iid = (c.json().get("data") or {}).get("id")
+    notes = []
+    shown = False
+    for method in ("PATCH", "PUT"):
+        p = _cd(method, f"/application-items/{iid}", json={"title": title, "visible_to_client": True,
+                                                            "comments": text})
+        if p.status_code in (200, 201):
+            shown = bool((p.json().get("data") or {}).get("visible_to_client", True))
+            break
+        notes.append(f"{method} {p.status_code} {p.text[:100]}")
+    if files:
+        ok, err = 0, ""
+        headers = {"Authorization": f"Bearer {_token()}", "Accept": "application/json"}
+        for name, data, mime in files:
+            for field in ("file", "files[]", "attachments[]"):
+                u = requests.post(f"{API}/application-items/{iid}/uploads", headers=headers,
+                                  files={field: (name, data, mime)}, timeout=120)
+                if u.status_code in (200, 201):
+                    ok += 1
+                    break
+                err = f"{u.status_code} {u.text[:100]}"
+        notes.append(f"{ok} of {len(files)} files attached" + (f" (last error {err})" if ok < len(files) else ""))
+    vis = "visible to the guest" if shown else "ADDED BUT HIDDEN from the guest"
+    return shown, f"'{title}' added to their portal, {vis}" + (f"; {'; '.join(notes)}" if notes else "")
+
+
 def _add_booking_box(app_id: int) -> str:
-    r = _cd("POST", f"/applications/{app_id}/application-items", json={
-        "type": "textbox", "reference": "expert-booking", "visible_to_client": True,
-        "comments": BOOKING_TEXT})
-    if r.status_code in (200, 201):
-        return "booking links added to their portal"
-    if r.status_code == 422 and "reference" in r.text:
-        return "booking links already in their portal"
-    return f"portal box not added ({r.status_code})"
+    return add_portal_item(app_id, "textbox", "Book your Expert Session", BOOKING_TEXT)[1]
 
 
 def _tag(app_id: int, name: str) -> None:
@@ -334,29 +367,14 @@ def handle(text: str, store) -> str | None:
 
 
 def probe(app_id: int) -> str:
-    """One-off diagnostic: shows how Clustdoc describes existing items and which item formats it accepts."""
-    out = []
-    r = _cd("GET", f"/applications/{app_id}/application-items", params={"per_page": 100})
-    print("[probe] items", r.status_code, r.text[:3000])
-    try:
-        first = (r.json().get("data") or [{}])[0]
-        out.append("item keys: " + ", ".join(sorted(first.keys()))[:400])
-        out.append("types: " + ", ".join(sorted({str(i.get('type')) for i in r.json().get('data') or []})))
-    except Exception as exc:
-        out.append(f"items read failed {r.status_code}: {exc}")
-    tries = [
-        ("textbox title", {"type": "textbox", "title": "Probe A", "comments": "probe"}),
-        ("textbox description", {"type": "textbox", "title": "Probe B", "description": "probe"}),
-        ("text title", {"type": "text", "title": "Probe C", "description": "probe"}),
-        ("custom", {"type": "custom", "title": "Probe D", "description": "probe"}),
-        ("fileshare", {"type": "fileshare", "title": "Probe E", "description": "probe"}),
-        ("document", {"type": "document", "title": "Probe F", "description": "probe"}),
-    ]
-    for label, body in tries:
-        p = _cd("POST", f"/applications/{app_id}/application-items", json=body)
-        print("[probe]", label, p.status_code, p.text[:1500])
-        out.append(f"{label}: {p.status_code} {p.text[:160]}")
-    return "Probe results (also in Render logs):\n" + "\n".join(out)
+    """Test run on a test application: adds the booking box and a sample promotion pack with one small image."""
+    import base64
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+    a = _add_booking_box(app_id)
+    b = add_portal_item(app_id, "fileshare", "Your promotion pack (test)", "Test promotion pack.",
+                        [("test-graphic.png", png, "image/png")])[1]
+    print("[probe]", a, "|", b)
+    return f"Probe results:\n{a}\n{b}"
 
 
 def check_in_background(store, send) -> None:
