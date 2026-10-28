@@ -173,7 +173,7 @@ def add_portal_item(app_id: int, kind: str, title: str, text: str,
     except Exception:
         pass
     c = _cd("POST", f"/applications/{app_id}/application-items",
-            json={"type": kind, "title": title, "comments": text})
+            json={"type": kind, "title": title, "comments": text, "instructions": _html(text)})
     if c.status_code not in (200, 201):
         return False, f"'{title}' not added ({c.status_code} {c.text[:120]})"
     iid = (c.json().get("data") or {}).get("id")
@@ -181,7 +181,7 @@ def add_portal_item(app_id: int, kind: str, title: str, text: str,
     shown = False
     for method in ("PATCH", "PUT"):
         p = _cd(method, f"/application-items/{iid}", json={"title": title, "visible_to_client": True,
-                                                            "comments": text})
+                                                            "comments": text, "instructions": _html(text)})
         if p.status_code in (200, 201):
             shown = bool((p.json().get("data") or {}).get("visible_to_client", True))
             break
@@ -202,8 +202,13 @@ def add_portal_item(app_id: int, kind: str, title: str, text: str,
     return shown, f"'{title}' added to their portal, {vis}" + (f"; {'; '.join(notes)}" if notes else "")
 
 
+def _html(text: str) -> str:
+    """Instructions are what the guest sees on the step; keep paragraphs and make links clickable."""
+    return "".join(f"<p>{_link(p).replace(chr(10), '<br>')}</p>" for p in text.split("\n\n"))
+
+
 def _add_booking_box(app_id: int) -> str:
-    return add_portal_item(app_id, "textbox", "Book your Expert Session", BOOKING_TEXT)[1]
+    return add_portal_item(app_id, "fileshare", "Book your Expert Session", BOOKING_TEXT)[1]
 
 
 def _tag(app_id: int, name: str) -> None:
@@ -368,10 +373,13 @@ def handle(text: str, store) -> str | None:
 
 def probe(app_id: int) -> str:
     """Test run on a test application: adds the booking box and a sample promotion pack with one small image."""
-    import base64
-    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (540, 675), (20, 33, 61)).save(buf, "PNG")
+    png = buf.getvalue()
     a = _add_booking_box(app_id)
-    b = add_portal_item(app_id, "fileshare", "Your promotion pack (test)", "Test promotion pack.",
+    b = add_portal_item(app_id, "fileshare", "Your promotion pack (test 2)", "Test promotion pack.\n\nLINKEDIN:\nA sample caption.\n\nMarketplace: https://www.welllednetwork.com/channels/business-services-marketplace",
                         [("test-graphic.png", png, "image/png")])[1]
     print("[probe]", a, "|", b)
     return f"Probe results:\n{a}\n{b}"
