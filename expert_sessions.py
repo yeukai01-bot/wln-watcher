@@ -392,18 +392,13 @@ def handle(text: str, store) -> str | None:
 
 
 def probe(app_id: int) -> str:
-    """Test run on a test application: one sample pack per upload format, to see which fills Files."""
-    import io
-    from PIL import Image
-    buf = io.BytesIO()
-    Image.new("RGB", (540, 675), (20, 33, 61)).save(buf, "PNG")
-    png = buf.getvalue()
-    out = []
-    for fld in ("attachments[]", "files[]", "file"):
-        out.append(add_portal_item(app_id, "fileshare", f"Pack test {fld}", "Sample pack text.",
-                                   [("test-graphic.png", png, "image/png")], field=fld)[1])
-    print("[probe]", " | ".join(out))
-    return "Probe results:\n" + "\n".join(out)
+    """Diagnostic on a test application: can Render fetch the guest's profile photo?"""
+    import expert_promo as ep
+    log: list = []
+    data = ep._guest_file(_items(app_id), "photo", log)
+    out = ("Photo found, " + str(len(data)) + " bytes" if data else "Photo NOT found") + "\n" + "\n".join(log)
+    print("[probe]", out[:3000])
+    return "Probe results:\n" + out[:3500]
 
 
 def check_in_background(store, send) -> None:
