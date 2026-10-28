@@ -42,6 +42,14 @@ import expert_sessions as es
 UK = ZoneInfo("Europe/London")
 ADAPTLY = "https://post.adaptlypost.com/post/api/v1"
 MARKETPLACE = "https://www.welllednetwork.com/channels/business-services-marketplace"
+TESTIMONIAL = "https://shor.by/expert-testimonial"   # Feedspace 60-second video form (Shorby tracks clicks)
+TESTIMONIAL_TEXT = (
+    "THANK YOU, AND ONE LAST FAVOUR\n\n"
+    "Thank you for sharing your expertise on Well-Led Network Expert Sessions. Please record a quick "
+    "60-second video about your session. It takes two minutes on your phone and helps registered managers "
+    "across the UK find you, and your session:\n" + TESTIMONIAL + "\n\n"
+    "The page walks you through it: who you are, what you covered, a word about the Well-Led Network, and "
+    "an invitation to watch your full session. One take is fine.")
 LOGO_URL = "https://ezycom.b-cdn.net/7/551/7cb67957e5cf/well-led-network-logo-2-mthontv1hmeh.png"
 FONT_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf"
 
@@ -427,6 +435,8 @@ def _portal_pack(app_id: int, texts: dict, when1: datetime, when2: datetime, car
             f"INSTAGRAM (attach expert-session.png, tag @yeukaik):\n{texts.get('guest_instagram', '')}\n\n"
             f"For the second post, use three-takeaways.png with a line in your own words about the takeaway that "
             f"matters most to you.\n\n"
+            f"YOUR 60-SECOND VIDEO: if you haven't yet, record a quick video about your session here, it helps "
+            f"people find you: {TESTIMONIAL}\n\n"
             f"ONE MORE THING: make sure your services are listed in the Business Services Marketplace, as that is "
             f"where we send everyone who wants to work with you: {MARKETPLACE}")
     try:
@@ -533,6 +543,11 @@ def run(store, send, app_id: int, test: bool = False) -> str:
         except Exception as exc:
             notes.append(f"AdaptlyPost problem: {str(exc)[:200]}")
 
+    if not test:  # first step after the recording: ask for the 60-second video testimonial
+        try:
+            notes.append(es.add_portal_item(app_id, "fileshare", "Your 60-second video", TESTIMONIAL_TEXT)[1])
+        except Exception as exc:
+            notes.append(f"testimonial step NOT added ({str(exc)[:100]})")
     notes.append(_portal_pack(app_id, texts, when1, when2,
                               [("expert-session.png", card1), ("three-takeaways.png", card2)]))
 
