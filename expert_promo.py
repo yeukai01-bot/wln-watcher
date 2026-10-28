@@ -9,8 +9,8 @@ Flow
     3. designs two branded graphics (session announcement + three takeaways)
     4. schedules the posts in AdaptlyPost: announcement next morning 8:30, takeaways 4 days later 12:30
        (your LinkedIn, the Well-Led Network LinkedIn page, Facebook, Instagram, Threads)
-    5. emails the guest their promotion pack (both graphics attached, a ready-to-share post,
-       the dates, and a reminder to list their services in the Marketplace)
+    5. puts the guest's promotion pack in their Clustdoc portal (both graphics, a ready-to-share post,
+       the dates, a Marketplace reminder). Clustdoc's own sequence emails them about it, so no duplicate emails
     6. queues the write-up for the normal publishing run, and moves the guest to stage 6
     7. when the write-up goes live: stage 7, which starts the Clustdoc thank-you and referral sequence
   You get the graphics and a summary on Telegram, and can edit or remove any post in AdaptlyPost
@@ -18,7 +18,7 @@ Flow
 
 Render settings (wln-secrets)
   ADAPTLY_API_KEY      required (AdaptlyPost > Manage > API & AI Agents; posts.schedule + media.upload)
-  CLUSTDOC_API_TOKEN   already set; needs attachments:read added for guest photos
+  CLUSTDOC_API_TOKEN   already set; needs attachments:read and attachments:write added (photos + pack)
   ADAPTLY_LINKEDIN_ME / ADAPTLY_LINKEDIN_PAGE / ADAPTLY_FACEBOOK_PAGE / ADAPTLY_INSTAGRAM / ADAPTLY_THREADS
                        optional overrides of the connected account ids below
 """
@@ -337,33 +337,40 @@ def _schedule(texts: dict, prefix: str, media: str, alt: str, when: datetime) ->
     return results
 
 
-# ---------------------------------------------------------------- email the guest their pack
-def _email_pack(contact: dict, texts: dict, when1: datetime, when2: datetime, cards: list[tuple[str, bytes]]) -> str:
-    key = os.getenv("BREVO_API_KEY", "").strip()
-    to = (contact or {}).get("email")
-    if not (key and to):
-        return "guest not emailed (no Brevo key or no email address)"
-    first = contact.get("firstname") or ""
-    body = (f"Hi {first},\n\nThank you for your Expert Session. It was a real pleasure, and I know registered managers "
-            f"and care leaders will take a lot from it.\n\nYour promotion pack is attached: two graphics made for you. "
-            f"We are sharing your session on {when1.strftime('%A %d %B')} and your three takeaways on "
-            f"{when2.strftime('%A %d %B')}, across LinkedIn, Facebook, Instagram and Threads.\n\n"
-            f"Two things that make the biggest difference:\n\n"
-            f"1. Share it with your own network. Here is a post you can use or adapt:\n\n{texts['guest_share_post']}\n\n"
-            f"2. Make sure your services are listed in the Well-Led Business Services Marketplace, as that is where "
-            f"we send everyone who wants to work with you:\n{MARKETPLACE}\n\n"
-            f"Thank you again for giving your time and expertise back to the sector.\n\n"
-            f"Warm regards\nYeukai Kajidori\nThe Kajidori Collective\nhttps://www.welllednetwork.com/blog")
-    html = "<br>".join(es._link(l) for l in body.split("\n"))
-    r = requests.post("https://api.brevo.com/v3/smtp/email", timeout=60,
-                      headers={"api-key": key, "accept": "application/json", "content-type": "application/json"},
-                      json={"sender": {"name": "Yeukai Kajidori, Well-Led Network",
-                                       "email": os.getenv("EXPERT_SENDER_EMAIL", "support@welllednetwork.com")},
-                            "to": [{"email": to}], "replyTo": {"email": "kajidoricollective@gmail.com"},
-                            "subject": "Your Expert Session promotion pack",
-                            "textContent": body, "htmlContent": html,
-                            "attachment": [{"name": n, "content": base64.b64encode(b).decode()} for n, b in cards]})
-    return "guest emailed their promotion pack" if r.status_code in (200, 201) else f"guest email not sent ({r.status_code}: {r.text[:120]})"
+# ---------------------------------------------------------------- promotion pack into the guest's portal
+def _portal_pack(app_id: int, texts: dict, when1: datetime, when2: datetime, cards: list[tuple[str, bytes]]) -> str:
+    """Puts the graphics and a ready-to-post caption in the guest's Clustdoc portal. Clustdoc's own
+    'Your promotion pack' email (3 days after stage 7) tells them to log in and download it, so no email here."""
+    text = (f"Your Expert Session promotion pack. We are sharing your session on {when1.strftime('%A %d %B')} and "
+            f"your three takeaways on {when2.strftime('%A %d %B')}. Download the two graphics below, and use or adapt "
+            f"this post to share it with your own network:\n\n{texts['guest_share_post']}\n\n"
+            f"Please make sure your services are listed in the Business Services Marketplace: {MARKETPLACE}")
+    headers = {"Authorization": f"Bearer {es._token()}", "Accept": "application/json"}
+    files = [("attachments[]", (n, b, "image/png")) for n, b in cards]
+    data = {"type": "fileshare", "title": "Your promotion pack", "reference": "promotion-pack",
+            "comments": text, "visible_to_client": "1"}
+    try:
+        r = requests.post(f"{es.API}/applications/{app_id}/application-items", headers=headers, data=data,
+                          files=files, timeout=120)
+        if r.status_code in (200, 201):
+            return "promotion pack (graphics + caption) added to the guest's portal"
+        if r.status_code == 422 and "reference" in r.text:
+            return "promotion pack already in the guest's portal"
+        # fall back: a text box with the caption, then the graphics uploaded to it
+        t = es._cd("POST", f"/applications/{app_id}/application-items",
+                   json={"type": "custom", "title": "Your promotion pack", "reference": "promotion-pack-2",
+                         "comments": text, "visible_to_client": True, "is_mandatory": False})
+        if t.status_code not in (200, 201):
+            return f"promotion pack NOT added to the portal ({r.status_code}/{t.status_code}); graphics are in Telegram"
+        item = t.json().get("data", {}).get("id")
+        ok = 0
+        for n, b in cards:
+            u = requests.post(f"{es.API}/application-items/{item}/uploads", headers=headers,
+                              files={"file": (n, b, "image/png")}, timeout=120)
+            ok += u.status_code in (200, 201)
+        return f"promotion pack added to the guest's portal ({ok} of {len(cards)} graphics uploaded)"
+    except Exception as exc:
+        return f"promotion pack NOT added to the portal ({str(exc)[:120]}); graphics are in Telegram"
 
 
 # ---------------------------------------------------------------- the main job
@@ -421,8 +428,8 @@ def run(store, send, app_id: int) -> str:
         except Exception as exc:
             notes.append(f"AdaptlyPost problem: {str(exc)[:200]}")
 
-    notes.append(_email_pack(contact, texts, when1, when2,
-                             [("expert-session.png", card1), ("three-takeaways.png", card2)]))
+    notes.append(_portal_pack(app_id, texts, when1, when2,
+                              [("expert-session.png", card1), ("three-takeaways.png", card2)]))
 
     today = now.strftime("%Y-%m-%d")
     a = store.put_approval({
