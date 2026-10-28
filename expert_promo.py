@@ -91,6 +91,10 @@ NEVER SOUND LIKE AI. Do not use: em dashes or en dashes (use commas or full stop
 stacked in a row, or lists of three adjectives. No headings or bold inside social posts. Vary sentence
 length. Write the way a person speaks.
 
+NAMES: Yeukai's own tool is the Well-Led and Safe Supported Living Framework. Always call it the Framework
+(for example 'the Well-Led and Safe Supported Living Framework self-check'), never 'the Standard', even if
+the application says Standard.
+
 FORMAT: inside the JSON values, never use double quotation marks; use single quotation marks if you need to
 quote anything. Use \\n for line breaks.
 
@@ -300,7 +304,14 @@ def announce_card(name: str, role: str, topic: str, photo: bytes | None) -> byte
     size = 440
     if photo:
         try:
-            p = ImageOps.fit(Image.open(io.BytesIO(photo)).convert("RGB"), (size, size))
+            src = Image.open(io.BytesIO(photo)).convert("RGB")
+            # whole photo, slightly smaller than the circle, on a soft blurred copy: no cropped chins or heads
+            from PIL import ImageFilter
+            if src.width > src.height:  # landscape: trim the sides only, so the full head and chin stay in
+                src = ImageOps.fit(src, (src.height, src.height))
+            p = ImageOps.fit(src, (size, size)).filter(ImageFilter.GaussianBlur(20))
+            inner = ImageOps.contain(src, (int(size * 0.84), int(size * 0.84)))
+            p.paste(inner, ((size - inner.width) // 2, (size - inner.height) // 2))
             mask = Image.new("L", (size, size), 0)
             ImageDraw.Draw(mask).ellipse([0, 0, size, size], fill=255)
             ring = Image.new("RGB", (size + 18, size + 18), GOLD)
