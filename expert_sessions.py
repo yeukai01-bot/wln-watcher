@@ -316,6 +316,9 @@ def handle(text: str, store) -> str | None:
             return "No Expert Session applications are waiting for you."
         return "Waiting for your decision:\n" + "\n".join(
             f"{k}: {json.loads(v).get('name')} - {json.loads(v).get('topic')}" for k, v in held.items())
+    pm = re.match(r"^guest\s+probe\s+(\d+)$", t)
+    if pm:
+        return probe(int(pm.group(1)))
     m = re.match(r"^guest\s+(approve|decline)\s+(\d+)$", t)
     if not m:
         return None
@@ -328,6 +331,32 @@ def handle(text: str, store) -> str | None:
     if r.status_code != 200:
         return f"Couldn't find Clustdoc application {aid} ({r.status_code})."
     return approve(store, r.json().get("data") or {"id": aid}, note=" by you")
+
+
+def probe(app_id: int) -> str:
+    """One-off diagnostic: shows how Clustdoc describes existing items and which item formats it accepts."""
+    out = []
+    r = _cd("GET", f"/applications/{app_id}/application-items", params={"per_page": 100})
+    print("[probe] items", r.status_code, r.text[:3000])
+    try:
+        first = (r.json().get("data") or [{}])[0]
+        out.append("item keys: " + ", ".join(sorted(first.keys()))[:400])
+        out.append("types: " + ", ".join(sorted({str(i.get('type')) for i in r.json().get('data') or []})))
+    except Exception as exc:
+        out.append(f"items read failed {r.status_code}: {exc}")
+    tries = [
+        ("textbox title", {"type": "textbox", "title": "Probe A", "comments": "probe"}),
+        ("textbox description", {"type": "textbox", "title": "Probe B", "description": "probe"}),
+        ("text title", {"type": "text", "title": "Probe C", "description": "probe"}),
+        ("custom", {"type": "custom", "title": "Probe D", "description": "probe"}),
+        ("fileshare", {"type": "fileshare", "title": "Probe E", "description": "probe"}),
+        ("document", {"type": "document", "title": "Probe F", "description": "probe"}),
+    ]
+    for label, body in tries:
+        p = _cd("POST", f"/applications/{app_id}/application-items", json=body)
+        print("[probe]", label, p.status_code, p.text[:1500])
+        out.append(f"{label}: {p.status_code} {p.text[:160]}")
+    return "Probe results (also in Render logs):\n" + "\n".join(out)
 
 
 def check_in_background(store, send) -> None:
