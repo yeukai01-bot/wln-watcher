@@ -34,6 +34,10 @@ HELP = (
     "cancel 2 withdraws topic 2 if it has not gone live.\n"
     "write <link> asks for an article on any page you have found, e.g. write https://www.cqc.org.uk/news/... You can add a note after the link.\n"
     "Approved topics are written, checked and published at the next publishing run, and you get the live link here.\n\n"
+    "Expert Sessions (Clustdoc guests):\n"
+    "On-topic applications are approved automatically 24 hours after submitting, and sent both booking links.\n"
+    "guests shows applications waiting for your decision.\n"
+    "guest approve 123 or guest decline 123 decides one (123 is the Clustdoc number in the alert).\n\n"
     "Report radar (CQC outreach):\n"
     "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
@@ -112,6 +116,14 @@ def handle_text(text: str) -> str:
     sb = sb_replies.handle(text, store)
     if sb is not None:
         return sb
+    try:
+        import expert_sessions
+
+        ex = expert_sessions.handle(text, store)
+    except ImportError:
+        ex = None
+    if ex is not None:
+        return ex
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -659,6 +671,12 @@ def health():
         practice_rooms.check_in_background(store, telegram.send_message)
     except Exception:
         pass
+    try:  # and for Expert Session guest applications in Clustdoc that are due for approval
+        import expert_sessions
+
+        expert_sessions.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
     return "Well-Led Network reply service is running."
 
 
@@ -690,6 +708,16 @@ def practice_rooms_check():
     if not _key_ok():
         abort(403)
     return jsonify({"result": practice_rooms.check(store, telegram.send_message)})
+
+
+@app.get("/expert-sessions/check")
+def expert_sessions_check():
+    """Run the Expert Sessions approval check now (needs the X-Key header)."""
+    import expert_sessions
+
+    if not _key_ok():
+        abort(403)
+    return jsonify({"result": expert_sessions.check(store, telegram.send_message, force=True)})
 
 
 @app.get("/calendar/check")
