@@ -118,24 +118,39 @@ def _pick(fields: dict, *words: str) -> str:
     return ""
 
 
-def _download(url: str) -> bytes | None:
-    try:
-        r = requests.get(url, timeout=60, headers={"Authorization": f"Bearer {es._token()}"})
-        return r.content if r.status_code == 200 and len(r.content) > 1000 else None
-    except Exception:
+def _download(url: str, log: list | None = None) -> bytes | None:
+    """Clustdoc download links are usually pre-signed, so try without our key first, then with it."""
+    if not url:
         return None
+    for headers in ({}, {"Authorization": f"Bearer {es._token()}"}):
+        try:
+            r = requests.get(url, timeout=60, headers=headers, allow_redirects=True)
+            if log is not None:
+                log.append(f"download {'with' if headers else 'without'} key: {r.status_code}, {len(r.content)} bytes")
+            if r.status_code == 200 and len(r.content) > 1000:
+                return r.content
+        except Exception as exc:
+            if log is not None:
+                log.append(f"download error: {str(exc)[:100]}")
+    return None
 
 
-def _guest_file(items: list[dict], word: str) -> bytes | None:
+def _guest_file(items: list[dict], word: str, log: list | None = None) -> bytes | None:
     for it in items:
         if word in str(it.get("title", "")).lower() and it.get("type") in ("file", "fileshare", "custom", None):
             r = es._cd("GET", f"/application-items/{it['id']}/uploads")
+            if log is not None:
+                log.append(f"item {it['id']} uploads: {r.status_code} {r.text[:300]}")
             if r.status_code != 200:
                 continue
             for up in r.json().get("data") or []:
-                data = _download(up.get("download_url") or up.get("url") or "")
+                url = (up.get("download_url") or up.get("url") or up.get("file_url")
+                       or (up.get("links") or {}).get("download") or "")
+                data = _download(url, log)
                 if data:
                     return data
+    if log is not None and not any(word in str(i.get("title", "")).lower() for i in items):
+        log.append(f"no step with '{word}' in its title; types seen: {sorted({str(i.get('type')) for i in items})}")
     return None
 
 
@@ -430,7 +445,8 @@ def run(store, send, app_id: int, test: bool = False) -> str:
         notes.append(_stage(app_id, "4. Session recorded"))
     f = _fields(items)
     name = _pick(f, "name", "shown") or es._name(app)
-    role = ", ".join(x for x in (_pick(f, "job title"), _pick(f, "organisation name")) if x)
+    title, org = _pick(f, "job title"), _pick(f, "organisation name")
+    role = title if (org and org.lower() in title.lower()) else ", ".join(x for x in (title, org) if x)
     answers = es._answers(items)
 
     reply = ai._ask(COPY_SYSTEM.replace("MARKETPLACE_URL", MARKETPLACE),
