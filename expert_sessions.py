@@ -41,9 +41,8 @@ LAST_RUN = "wln:expert_last_run"
 WAIT_HOURS = 24
 _lock = threading.Lock()
 
-FREE_URL = "https://www.vectera.com/book/the-kajidori-care-brief/u/yeukai/t/option-1-well-led-network-expert-session-free/"
-GIFT_URL = ("https://www.vectera.com/book/the-kajidori-care-brief/u/yeukai/t/"
-            "option-2-well-led-network-expert-session-gift-a-home-charitable-gift-67/")
+FREE_URL = "https://shor.by/expert-session-free"   # Shorby, tracks clicks; goes to the free Vectera booking page
+GIFT_URL = "https://shor.by/expert-session-gift"   # Shorby, tracks clicks; goes to the Gift a Home booking page
 
 BOOKING_TEXT = f"""Congratulations, your application has been approved.
 
