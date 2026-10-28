@@ -234,6 +234,11 @@ def approve(store, app: dict, items: list[dict] | None = None, note: str = "") -
     items = items if items is not None else _items(app_id)
     steps = [_approve_items(app_id, items), _add_booking_box(app_id)]
     _tag(app_id, "Expert Session - Approved")
+    try:  # move the guest along the tracker; harmless if Clustdoc expects a different stage value
+        st = _cd("PATCH", f"/applications/{app_id}", json={"stage": "3. Approved - session booked"})
+        steps.append("stage set to 3. Approved" if st.status_code == 200 else f"stage not changed ({st.status_code})")
+    except Exception:
+        pass
     steps.append(_email(app.get("contact") or {}, "You're approved: book your Well-Led Network Expert Session",
                         BOOKING_TEXT))
     if store.r:
