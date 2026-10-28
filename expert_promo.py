@@ -91,6 +91,9 @@ NEVER SOUND LIKE AI. Do not use: em dashes or en dashes (use commas or full stop
 stacked in a row, or lists of three adjectives. No headings or bold inside social posts. Vary sentence
 length. Write the way a person speaks.
 
+FORMAT: inside the JSON values, never use double quotation marks; use single quotation marks if you need to
+quote anything. Use \\n for line breaks.
+
 FACTS: use only what the guest wrote in their application and the facts about Yeukai above. Never invent
 statistics, quotes, results, names or events.
 
@@ -481,7 +484,13 @@ def run(store, send, app_id: int, test: bool = False) -> str:
 
     reply = ai._ask(COPY_SYSTEM.replace("MARKETPLACE_URL", MARKETPLACE),
                     f"Guest: {name}\nRole: {role}\n\nTheir application:\n{answers}", max_tokens=8000)
-    texts = ai._json(reply)
+    try:
+        texts = ai._json(reply)
+    except Exception:  # a stray quotation mark inside a post breaks the JSON; have Claude repair it once
+        fixed = ai._ask("You repair JSON. Return only the corrected JSON object with exactly the same keys and "
+                        "wording. Escape every double quotation mark inside a string value as \\\" and change "
+                        "nothing else.", reply, max_tokens=8000)
+        texts = ai._json(fixed)
 
     photo = _guest_file(items, "photo")
     if not photo:
