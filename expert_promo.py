@@ -546,6 +546,10 @@ def run(store, send, app_id: int, test: bool = False) -> str:
     if not test:  # first step after the recording: ask for the 60-second video testimonial
         try:
             notes.append(es.add_portal_item(app_id, "fileshare", "Your 60-second video", TESTIMONIAL_TEXT)[1])
+            ra = es._cd("GET", f"/applications/{app_id}")
+            contact = (ra.json().get("data") or {}).get("contact") if ra.status_code == 200 else {}
+            sent = es._email(contact or {}, "Thank you, and one last favour", TESTIMONIAL_TEXT.split("\n\n", 1)[1])
+            notes.append(f"60-second video request {sent}")
         except Exception as exc:
             notes.append(f"testimonial step NOT added ({str(exc)[:100]})")
     notes.append(_portal_pack(app_id, texts, when1, when2,
