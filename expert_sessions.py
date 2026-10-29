@@ -261,6 +261,22 @@ def _email(contact: dict, subject: str, text: str) -> str:
     return "emailed" if r.status_code in (200, 201) else f"email not sent (Brevo said {r.status_code}: {r.text[:120]})"
 
 
+def add_to_list(contact: dict) -> str:
+    """Puts the guest in the Brevo list 'WLN Expert Session Guests' (list #32), creating or updating them."""
+    key = os.getenv("BREVO_API_KEY", "").strip()
+    to = (contact or {}).get("email")
+    if not key or not to:
+        return "not added to the Brevo guest list (no key or no email)"
+    lid = int(os.getenv("EXPERT_BREVO_LIST", "32"))
+    r = requests.post(f"{BREVO}/contacts", timeout=30,
+                      headers={"api-key": key, "accept": "application/json", "content-type": "application/json"},
+                      json={"email": to, "listIds": [lid], "updateEnabled": True,
+                            "attributes": {"FIRSTNAME": (contact or {}).get("firstname") or "",
+                                           "LASTNAME": (contact or {}).get("lastname") or ""}})
+    return "added to the Brevo guest list" if r.status_code in (200, 201, 204) else \
+        f"not added to the Brevo guest list ({r.status_code}: {r.text[:100]})"
+
+
 def _link(line: str) -> str:
     line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return re.sub(r"(https://\S+)", r'<a href="\1">\1</a>', line)
@@ -301,6 +317,7 @@ def approve(store, app: dict, items: list[dict] | None = None, note: str = "") -
         pass
     steps.append(_email(app.get("contact") or {}, "You're approved: book your Well-Led Network Expert Session",
                         BOOKING_TEXT))
+    steps.append(add_to_list(app.get("contact") or {}))
     if store.r:
         store.r.hset(DONE, str(app_id), "approved " + datetime.now(UK).strftime("%d %b %H:%M"))
         store.r.hdel(HELD, str(app_id))
