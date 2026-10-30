@@ -604,8 +604,11 @@ def _waiting_lines(store) -> list[str]:
     lines = []
     for k, _ in waiting_list(store):
         r = es._cd("GET", f"/applications/{k}")
-        nm = es._name(r.json().get("data") or {}) if r.status_code == 200 else "guest"
-        lines.append(f"{k}: {nm}")
+        if r.status_code != 200:  # deleted or test applications: drop them from the waiting list for good
+            if store.r:
+                store.r.hdel(es.DONE, k)
+            continue
+        lines.append(f"{k}: {es._name(r.json().get('data') or {})}")
     return lines
 
 
