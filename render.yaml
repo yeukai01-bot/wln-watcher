@@ -97,3 +97,16 @@ services:
     schedule: "*/10 6-22 * * *"
     buildCommand: pip install requests
     startCommand: python -c "import requests; print(requests.get('https://wln-replies.onrender.com/', timeout=90).status_code)"
+
+  # SalesBlink outreach alerts to Telegram: every reply and bounce within 15 minutes,
+  # plus a 17:00 UK daily summary (sent, replies, campaign status, mailbox health).
+  # Runs for a few seconds every 15 minutes; costs pennies a month on the Starter cron plan.
+  - type: cron
+    name: wln-salesblink-alerts
+    runtime: python
+    plan: starter
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python salesblink_alerts.py
+    envVars:
+      - fromGroup: wln-secrets
