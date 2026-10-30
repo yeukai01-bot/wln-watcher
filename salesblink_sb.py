@@ -15,8 +15,11 @@ and link to that service's free Report Review:
 Settings on Render (wln-secrets):
     SALESBLINK_API_KEY         required; without it this module quietly does nothing
     SALESBLINK_RADAR_LIST_ID   the list UUID (falls back to the list created on 18 Oct 2026)
-    RADAR_SB_MATCH             which services qualify (regex, default "supported living")
-    RADAR_SB_ALLOW_RISKY       "1" to also add addresses Clearout could not fully confirm (default off)
+    RADAR_SB_MATCH             which services qualify (regex; default "." = every adult social care service.
+                               Widened from "supported living" on 30 Oct 2026: almost no radar finds qualified)
+    RADAR_SB_ALLOW_RISKY       "1" to add any address Clearout could not fully confirm. Without it, a "risky"
+                               address is still added when it was published on the service's own website
+                               (catch-all inboxes at small providers are real, just unconfirmable)
 """
 from __future__ import annotations
 
@@ -46,11 +49,11 @@ def list_id() -> str:
 
 
 def _match_rx():
-    return re.compile(os.getenv("RADAR_SB_MATCH", "supported living"), re.I)
+    return re.compile(os.getenv("RADAR_SB_MATCH", "."), re.I)
 
 
 def is_target(p: dict) -> bool:
-    """True for the services this email avenue is for (supported living by default)."""
+    """True for the services this email avenue is for (every service by default)."""
     text = " ".join(str(p.get(k, "")) for k in ("service_type", "location_name", "provider_name"))
     return bool(_match_rx().search(text))
 
@@ -67,13 +70,15 @@ def _post(path: str, body: dict) -> dict:
 def eligible(p: dict, suppressed: set) -> tuple[bool, str]:
     """Whether this prospect may go into the cold email sequence, and if not, why not."""
     if not is_target(p):
-        return False, "not supported living"
+        return False, "outside RADAR_SB_MATCH"
     if not p.get("email"):
         return False, "no email found"
     if not p.get("can_email"):
         return False, "no company number (call or write instead)"
     check = p.get("email_check", "")
-    if check != "safe" and not (check == "risky" and os.getenv("RADAR_SB_ALLOW_RISKY") == "1"):
+    risky_ok = check == "risky" and (os.getenv("RADAR_SB_ALLOW_RISKY") == "1"
+                                     or p.get("email_source") == "service website")
+    if check != "safe" and not risky_ok:
         return False, f"email not confirmed by Clearout ({check or 'unchecked'})"
     if p["email"].lower() in suppressed:
         return False, "asked not to be contacted"
@@ -125,7 +130,7 @@ def add_radar_prospects(prospects: list[dict], store) -> str:
             continue
         ok, why = eligible(p, suppressed)
         if not ok:
-            if why != "not supported living":
+            if why != "outside RADAR_SB_MATCH":
                 skipped[why] = skipped.get(why, 0) + 1
             continue
         p["sb_queued_at"] = now
@@ -135,7 +140,7 @@ def add_radar_prospects(prospects: list[dict], store) -> str:
         queued.append(f"{p.get('code', '')} {p.get('location_name', '')} ({p['email']})")
     if not queued and not skipped:
         return ""
-    msg = (f"Email (SalesBlink): {len(queued)} supported living service{'s' if len(queued) != 1 else ''} queued for the "
+    msg = (f"Email (SalesBlink): {len(queued)} service{'s' if len(queued) != 1 else ''} queued for the "
            f"CQC Radar sequence. They join it in {DELAY_DAYS:g} days, after the LinkedIn invitation, and then get the "
            "approved emails automatically. Do not email these by hand.")
     if queued:
