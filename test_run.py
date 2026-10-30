@@ -232,6 +232,25 @@ assert pr._domain("https://www.Oak.test/contact") == "oak.test"
 os.environ.pop("CLEAROUT_API_KEY")
 print("CLEAROUT TESTS PASSED")
 
+# ---------------- guessed domain must be the care service (30 Oct 2026, sonicgold.net) ----------------
+class _R:
+    def __init__(s, t, c=200): s.text=t; s.status_code=c
+_pages = {"https://sonicgold.net": "Sonic Gold, a multidisciplinary creative practice: creative direction and sound-based storytelling.",
+          "https://chimescare.test": "The Chimes Residential Home in Stoke-on-Trent: residential care for older people, CQC registered.",
+          "https://othercare.test": "Willow Lodge care home in Leeds, nursing and dementia care."}
+_real_get = pr.requests.get
+pr.requests.get = lambda url, headers=None, timeout=None: _R(_pages.get(url, ""), 200 if url in _pages else 404)
+_p = {"location_name": "The Chimes Residential Home", "provider_name": "Sonic Gold Limited", "town": "Stoke-on-Trent"}
+ok, why = pr.domain_is_this_service("sonicgold.net", _p)
+assert not ok and "not a care website" in why, why
+assert pr.domain_is_this_service("chimescare.test", _p)[0]
+ok, why = pr.domain_is_this_service("othercare.test", _p)
+assert not ok and "does not mention" in why, why
+assert not pr.domain_is_this_service("gmail.com", _p)[0]
+assert not pr.domain_is_this_service("missing.test", _p)[0]
+pr.requests.get = _real_get
+print("DOMAIN CHECK TESTS PASSED")
+
 
 # ---------------- free Report Review ----------------
 import review

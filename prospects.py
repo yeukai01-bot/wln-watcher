@@ -272,6 +272,52 @@ def _domain(website: str) -> str:
     return re.sub(r"^www\.", "", re.sub(r"^https?://", "", (website or "").strip().lower()).split("/")[0])
 
 
+CARE_WORDS = ("care home", "nursing home", "residential home", "residential care", "home care", "homecare",
+              "domiciliary", "supported living", "care quality commission", "cqc", "care services", "care provider",
+              "dementia", "learning disabilit", "personal care", "residents", "carers", "social care")
+NAME_STOPWORDS = {"the", "and", "of", "ltd", "limited", "llp", "plc", "care", "home", "homes", "house", "nursing",
+                  "residential", "services", "service", "healthcare", "health", "group", "uk", "road", "street",
+                  "lane", "court", "lodge", "centre", "center", "branch", "supported", "living", "support"}
+
+
+def _name_words(*names: str) -> set:
+    words = set()
+    for n in names:
+        for w in re.findall(r"[a-z]+", (n or "").lower()):
+            if len(w) >= 4 and w not in NAME_STOPWORDS:
+                words.add(w)
+    return words
+
+
+def domain_is_this_service(domain: str, p: dict) -> tuple[bool, str]:
+    """When Clearout guessed the domain from a company name, check its website really is this care service.
+
+    Added 30 Oct 2026: "Sonic Gold Limited" (owner of The Chimes care home) resolved to sonicgold.net, a
+    creative studio, and a CQC review went to the wrong organisation. The site must talk about care AND
+    mention the service, its owner company or its town."""
+    domain = (domain or "").lower()
+    if not domain or domain in FREE_MAIL:
+        return False, "free mailbox, cannot confirm it is the service"
+    text = ""
+    for url in (f"https://{domain}", f"https://www.{domain}"):
+        try:
+            r = requests.get(url, headers=sources.BROWSER_UA, timeout=20)
+            if r.status_code < 400:
+                text = BeautifulSoup(r.text, "html.parser").get_text(" ").lower()
+                break
+        except Exception:
+            continue
+    if not text:
+        return False, f"could not open {domain} to confirm it"
+    if not any(w in text for w in CARE_WORDS):
+        return False, f"{domain} is not a care website"
+    words = _name_words(p.get("location_name", ""), p.get("provider_name", ""))
+    town = (p.get("town") or "").lower().strip()
+    if any(w in text for w in words) or (town and town in text):
+        return True, ""
+    return False, f"{domain} does not mention this service, its owner or its town"
+
+
 def find_email(website: str) -> str:
     """Look for a published contact email on the provider's own website (home and contact pages)."""
     if not website:
@@ -420,6 +466,13 @@ def prepare(p: dict, n: int, store, suppressed: set, co_stats: dict) -> dict:
         co_stats["tried"] += 1
         p["email"] = clearout_find(p["registered_manager"], lookup)
         p["email_source"] = "Clearout finder" if p["email"] else ""
+        if p["email"] and not _domain(site):
+            # Domain was guessed from the company name: only use it if that website is this care service.
+            ok, why = domain_is_this_service(p["email"].split("@")[1], p)
+            if not ok:
+                p["note"] = (p.get("note", "") + f" Clearout found {p['email']} but {why}, so it was not used: call or write instead.").strip()
+                p["email"], p["email_source"] = "", ""
+                co_stats["rejected"] = co_stats.get("rejected", 0) + 1
         co_stats["found"] += bool(p["email"])
     elif not p["email"]:
         co_stats["no_name_or_site"] += 1
@@ -479,7 +532,7 @@ def run(store, telegram) -> None:
 
     suppressed = set(store.suppressed())
     made = []
-    co_stats = {"tried": 0, "found": 0, "no_name_or_site": 0}
+    co_stats = {"tried": 0, "found": 0, "no_name_or_site": 0, "rejected": 0}
     for n, p in enumerate(found, 1):
         made.append(prepare(p, n, store, suppressed, co_stats))
 
@@ -519,6 +572,7 @@ def run(store, telegram) -> None:
         "unsolicited emails is stricter for sole traders and partnerships."
         + (f"\n\nEmail finder (Clearout): searched {co_stats['tried']}, found {co_stats['found']}; "
            f"{co_stats['no_name_or_site']} had no registered manager name to search with."
+           + (f" {co_stats['rejected']} found address(es) dropped because the website was not the care service." if co_stats.get('rejected') else "")
            + ("" if os.getenv("CLEAROUT_API_KEY") else " CLEAROUT_API_KEY is not set.") + (f" Last error: {CLEAROUT_LAST_ERROR[0]}" if CLEAROUT_LAST_ERROR[0] else ""))
         + (("\n\nPersonal videos: " + (f"{len(queued)} queued in Sendspark." if queued else "none queued.")
             + (f" Last Sendspark error: {sendspark.LAST_ERROR[0]}" if sendspark.LAST_ERROR[0] else ""))
