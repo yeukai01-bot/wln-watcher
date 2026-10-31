@@ -125,13 +125,45 @@ def _cd(method: str, path: str, **kw):
     return r
 
 
+def _tpl_of(app: dict) -> str:
+    t = app.get("template_id") or app.get("templateId")
+    if not t and isinstance(app.get("template"), dict):
+        t = app["template"].get("id")
+    return str(t or "")
+
+
+def _status_of(app: dict) -> str:
+    st = app.get("status")
+    if isinstance(st, dict):
+        st = st.get("name") or st.get("label") or st.get("value") or ""
+    return str(st or "").lower()
+
+
+def _date_of(app: dict, *keys: str) -> datetime | None:
+    for k in keys:
+        v = app.get(k)
+        if v:
+            try:
+                d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+    return None
+
+
 def _submitted() -> list[dict]:
+    """Submitted Expert Session applications.
+
+    31 Oct 2026: Kevin Humphrys (20774777, submitted 30 Oct) was never found by the API filters
+    (status=submitted / created_after), so he sat unapproved. Now the list asks Clustdoc for the template
+    only and filters here: right template, created on or after EXPERT_LIVE_FROM, status submitted/complete.
+    An application whose template cannot be read is skipped (never risk emailing an old podcast guest)."""
     tpl = os.getenv("EXPERT_TEMPLATE_ID", "374233")
-    live_from = os.getenv("EXPERT_LIVE_FROM", "2026-10-28")
-    out, page = [], 1
+    live_from = datetime.fromisoformat(os.getenv("EXPERT_LIVE_FROM", "2026-10-28")).replace(tzinfo=timezone.utc)
+    out, seen, page = [], [], 1
     while page <= 5:
-        r = _cd("GET", "/applications", params={"template_id": tpl, "status": "submitted", "per_page": 100,
-                                                "page": page, "created_after": live_from, "sort": "-updated_at"})
+        r = _cd("GET", "/applications", params={"template_id": tpl, "per_page": 100, "page": page,
+                                                "sort": "-updated_at"})
         if r.status_code != 200:
             raise RuntimeError(f"Clustdoc list failed ({r.status_code}): {r.text[:200]}")
         try:
@@ -139,10 +171,26 @@ def _submitted() -> list[dict]:
         except ValueError:
             raise RuntimeError(f"Clustdoc sent a non-JSON reply twice for the applications list "
                                f"({r.headers.get('content-type', '')}): {r.text[:120]!r}")
-        out += data.get("data") or []
+        rows = data.get("data") or []
+        if page == 1 and rows:
+            print("[expert sessions] list keys:", sorted(rows[0].keys())[:30])
+        for app in rows:
+            aid, t, st = app.get("id"), _tpl_of(app), _status_of(app)
+            created = _date_of(app, "created_at", "createdAt")
+            why = ""
+            if t != tpl:
+                why = f"template {t or 'unknown'}"
+            elif created and created < live_from:
+                why = "created before live date"
+            elif not any(w in st for w in ("submit", "complete")):
+                why = f"status {st or 'unknown'}"
+            seen.append(f"{aid}:{'ok' if not why else why}")
+            if not why:
+                out.append(app)
         if not (data.get("links") or {}).get("next"):
             break
         page += 1
+    print(f"[expert sessions] listed {len(seen)}, submitted {len(out)}: " + ", ".join(seen[:15]))
     return out
 
 
