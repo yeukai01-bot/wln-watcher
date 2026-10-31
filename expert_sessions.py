@@ -109,8 +109,19 @@ def _token() -> str:
 
 
 def _cd(method: str, path: str, **kw):
-    r = requests.request(method, f"{API}{path}", timeout=30,
-                         headers={"Authorization": f"Bearer {_token()}", "Accept": "application/json"}, **kw)
+    """Clustdoc call. 31 Oct 2026: a GET came back 200 with a blank/non-JSON body ("Expecting value: line 1
+    column 1"), which stopped the whole check. Retry a GET once after a short pause when the body is not JSON."""
+    for attempt in (1, 2):
+        r = requests.request(method, f"{API}{path}", timeout=30,
+                             headers={"Authorization": f"Bearer {_token()}", "Accept": "application/json"}, **kw)
+        if method.upper() != "GET" or r.status_code != 200 or attempt == 2:
+            return r
+        try:
+            r.json()
+            return r
+        except ValueError:
+            print(f"[clustdoc] non-JSON reply on {path} ({r.headers.get('content-type', '')}): {r.text[:120]!r}; retrying")
+            time.sleep(5)
     return r
 
 
@@ -123,7 +134,11 @@ def _submitted() -> list[dict]:
                                                 "page": page, "created_after": live_from, "sort": "-updated_at"})
         if r.status_code != 200:
             raise RuntimeError(f"Clustdoc list failed ({r.status_code}): {r.text[:200]}")
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError:
+            raise RuntimeError(f"Clustdoc sent a non-JSON reply twice for the applications list "
+                               f"({r.headers.get('content-type', '')}): {r.text[:120]!r}")
         out += data.get("data") or []
         if not (data.get("links") or {}).get("next"):
             break
