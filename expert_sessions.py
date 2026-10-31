@@ -39,6 +39,12 @@ DONE = "wln:expert_done"            # hash: application id -> outcome
 HELD = "wln:expert_held"            # hash: application id -> json (waiting for Yeukai)
 LAST_RUN = "wln:expert_last_run"
 WAIT_HOURS = 24
+APPROVED_AT = "wln:expert_approved_at"   # hash: application id -> ISO time approved
+BOOKED_APPS = "wln:expert_booked_apps"   # hash: application id -> ISO time a booking was matched
+CHASE = "wln:expert_chase"               # hash: application id -> json {"n": nudges done, "stop": bool}
+# Approved but not booked (31 Oct 2026, Kevin Humphrys): nothing followed up, so a guest could quietly drop off.
+# Days after approval: first email nudge, second email nudge, then a Telegram note to Yeukai to call them.
+CHASE_DAYS = (3, 7, 10)
 _lock = threading.Lock()
 
 FREE_URL = "https://shor.by/expert-session-free"   # Shorby, tracks clicks; goes to the free Vectera booking page
@@ -383,6 +389,7 @@ def approve(store, app: dict, items: list[dict] | None = None, note: str = "") -
     steps.append(add_to_list(app.get("contact") or {}))
     if store.r:
         store.r.hset(DONE, str(app_id), "approved " + datetime.now(UK).strftime("%d %b %H:%M"))
+        store.r.hset(APPROVED_AT, str(app_id), datetime.now(UK).isoformat())
         store.r.hdel(HELD, str(app_id))
     return f"Expert Session guest approved{note}: {_name(app)} ({app_id})\n" + "; ".join(steps)
 
@@ -442,7 +449,188 @@ def check(store, send, force: bool = False) -> str:
                      f"Application: {app.get('public_url') or 'open it in Clustdoc'}\n\n"
                      f"Reply: guest approve {aid}  or  guest decline {aid}")
                 notes.append(f"held {aid}")
+        try:
+            notes += chase(store, send)
+        except Exception as exc:
+            print("[expert chase failed]", exc)
         return ", ".join(notes) or "nothing due"
+
+
+# ---------------------------------------------------------------- approved but not booked
+NUDGE_1 = """Just a friendly follow-up: your Well-Led Network Expert Session is approved and your place is ready. It only needs a Thursday.
+
+Book the free session here (pick any Thursday that suits, 4pm UK time):
+{free}
+
+Or the Gift a Home option, where 100% of your gift goes to Edge Housing:
+{gift}
+
+It takes about two minutes. If none of the Thursdays suit you, just reply "waiting list" and I'll offer you the next one that frees up. If something has come up and now isn't the right time, reply "later" and I'll check back in a few months. No pressure either way."""
+
+NUDGE_2 = """I didn't want your Expert Session to slip through the cracks, so this is my last reminder.
+
+Registered managers and care leaders across the UK will watch your session, and it links straight to your listing in the Well-Led Business Services Marketplace, so it keeps working for you long after we record.
+
+Book your Thursday here:
+{free}
+
+Gift a Home option:
+{gift}
+
+Or simply reply with a Thursday that works for you and I'll book it for you myself."""
+
+
+def _approved_at(store, aid: str, done_val: str) -> datetime | None:
+    v = store.r.hget(APPROVED_AT, aid)
+    if v:
+        try:
+            return datetime.fromisoformat(v)
+        except Exception:
+            pass
+    m = re.match(r"approved (\d{1,2} \w{3} \d{1,2}:\d{2})", done_val or "")
+    if not m:
+        return None
+    now = datetime.now(UK)
+    try:
+        d = datetime.strptime(f"{m.group(1)} {now.year}", "%d %b %H:%M %Y").replace(tzinfo=UK)
+    except ValueError:
+        return None
+    return d.replace(year=now.year - 1) if d > now + timedelta(days=1) else d
+
+
+def _is_booked(store, aid: str, app: dict | None) -> bool:
+    if store.r.hexists(BOOKED_APPS, aid):
+        return True
+    c = (app or {}).get("contact") or {}
+    email = (c.get("email") or "").lower()
+    full = f"{c.get('firstname') or ''} {c.get('lastname') or ''}".strip().lower()
+    for v in store.r.hgetall("wln:expert_booked").values():  # expert_brief.BOOKED
+        try:
+            b = json.loads(v)
+        except Exception:
+            continue
+        if b.get("skip"):
+            continue
+        if str(b.get("app_id") or "") == aid or (email and (b.get("email") or "").lower() == email) \
+                or (full and (b.get("name") or "").strip().lower() == full):
+            store.r.hset(BOOKED_APPS, aid, datetime.now(UK).isoformat())
+            return True
+    return False
+
+
+def chase(store, send, force: bool = False) -> list[str]:
+    """Follow up approved guests who haven't booked: email nudges on CHASE_DAYS[0] and [1], then a
+    Telegram note to Yeukai on CHASE_DAYS[2]. Weekdays 9am to 6pm UK only; one step per guest per run.
+    Stops for anyone booked, on the waiting list, or stopped with 'guest stop 123'."""
+    if not store.r:
+        return []
+    now = datetime.now(UK)
+    if not force and (now.weekday() > 4 or not 9 <= now.hour < 18):
+        return []
+    notes = []
+    for aid, val in store.r.hgetall(DONE).items():
+        if not str(val).startswith("approved"):
+            continue
+        state = json.loads(store.r.hget(CHASE, aid) or "{}")
+        if state.get("stop") or state.get("n", 0) >= 3 or store.r.hexists("wln:expert_waitlist", aid):
+            continue
+        at = _approved_at(store, aid, val)
+        if not at:
+            continue
+        step = state.get("n", 0)
+        if now - at < timedelta(days=CHASE_DAYS[step]):
+            continue
+        r = _cd("GET", f"/applications/{aid}")
+        if r.status_code != 200:
+            continue
+        app = r.json().get("data") or {}
+        if _is_booked(store, aid, app):
+            continue
+        name, contact = _name(app), app.get("contact") or {}
+        if step < 2:
+            text = (NUDGE_1 if step == 0 else NUDGE_2).format(free=FREE_URL, gift=GIFT_URL)
+            subject = ("Your Expert Session: pick your Thursday" if step == 0
+                       else "Last reminder: your Well-Led Network Expert Session")
+            out = _email(contact, subject, text)
+            if out != "emailed":
+                send(f"Expert Session follow-up to {name} ({aid}) was NOT sent: {out}")
+                continue
+            send(f"Expert Session follow-up {step + 1} of 2 emailed to {name} ({aid}): approved "
+                 f"{(now - at).days} days ago, not booked yet.\nReply 'guest stop {aid}' to stop, "
+                 f"or 'guest booked {aid}' if they've booked another way.")
+        else:
+            send(f"Expert Session guest still not booked: {name} ({aid}), approved {(now - at).days} days ago, "
+                 f"two reminders sent. Worth a quick call or WhatsApp.\nEmail: {contact.get('email') or 'not given'}"
+                 + (f"\nPhone: {contact.get('phone')}" if contact.get("phone") else "")
+                 + f"\nReply 'waitlist add {aid}', 'guest booked {aid}' or 'guest stop {aid}'.")
+        state["n"] = step + 1
+        state["last"] = now.isoformat()
+        store.r.hset(CHASE, aid, json.dumps(state))
+        notes.append(f"chase{step + 1} {aid}")
+    return notes
+
+
+def on_guest_reply(store, sender: str, subject: str, body: str, send) -> str:
+    """An email reply reached kajidoricollective Gmail. If it is from an approved Expert Session guest:
+    'waiting list' puts them on the waiting list; 'later' stops the follow-ups; anything else pauses the
+    automatic follow-ups (a real conversation has started) and tells Yeukai what they said."""
+    if not store.r or not _token():
+        return ""
+    m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", sender or "")
+    email = (m.group(0) if m else "").lower()
+    if not email:
+        return ""
+    for aid, val in store.r.hgetall(DONE).items():
+        if not str(val).startswith("approved"):
+            continue
+        r = _cd("GET", f"/applications/{aid}")
+        if r.status_code != 200:
+            continue
+        app = r.json().get("data") or {}
+        if ((app.get("contact") or {}).get("email") or "").lower() != email:
+            continue
+        # only the new part of the reply, not the quoted email underneath
+        new = re.split(r"(?im)^(?:>|on .{5,80}wrote:|-----original message|from:\s)", body or "")[0]
+        low = new.lower()
+        name = _name(app)
+        state = json.loads(store.r.hget(CHASE, aid) or "{}")
+        if "waiting list" in low or "waitlist" in low:
+            store.r.hset("wln:expert_waitlist", aid, datetime.now(UK).isoformat())
+            _tag(int(aid), "Expert Session - Waiting list")
+            send(f"{name} ({aid}) replied 'waiting list', so they're on the Expert Session waiting list now. "
+                 "They'll be emailed the moment a Thursday frees up.")
+            return "guest waitlisted"
+        state["stop"] = True
+        store.r.hset(CHASE, aid, json.dumps(state))
+        said = re.sub(r"\s+", " ", new).strip()[:400] or "(no text)"
+        if re.search(r"\blater\b|not now|not the right time", low):
+            send(f"{name} ({aid}) replied that now isn't the right time. Automatic follow-ups stopped.\n"
+                 f"They said: {said}")
+            return "guest later"
+        if not _is_booked(store, aid, app):
+            send(f"Expert Session guest replied: {name} ({aid}), not booked yet. Automatic follow-ups paused "
+                 f"while you talk.\nThey said: {said}\n\nIf they name a Thursday, book it for them in Vectera "
+                 f"(the host view shows every slot). Reply 'guest restart {aid}' to resume the reminders.")
+        return "guest reply"
+    return ""
+
+
+def _chase_status(store) -> str:
+    rows = []
+    for aid, val in store.r.hgetall(DONE).items():
+        if not str(val).startswith("approved"):
+            continue
+        state = json.loads(store.r.hget(CHASE, aid) or "{}")
+        if _is_booked(store, aid, None):
+            s = "booked"
+        elif store.r.hexists("wln:expert_waitlist", aid):
+            s = "waiting list"
+        elif state.get("stop"):
+            s = "follow-ups stopped"
+        else:
+            s = f"not booked, {state.get('n', 0)} of 2 reminders sent"
+        rows.append(f"{aid}: {s} ({val})")
+    return "Approved guests:\n" + "\n".join(rows) if rows else "No approved guests yet."
 
 
 def handle(text: str, store) -> str | None:
@@ -456,6 +644,22 @@ def handle(text: str, store) -> str | None:
             return "No Expert Session applications are waiting for you."
         return "Waiting for your decision:\n" + "\n".join(
             f"{k}: {json.loads(v).get('name')} - {json.loads(v).get('topic')}" for k, v in held.items())
+    if t in ("approved", "guests approved", "guest chase", "not booked"):
+        return _chase_status(store) if store.r else "No memory store."
+    cm = re.match(r"^guest\s+(booked|stop|restart)\s+(\d+)$", t)
+    if cm and store.r:
+        what, aid = cm.group(1), cm.group(2)
+        if what == "booked":
+            store.r.hset(BOOKED_APPS, aid, datetime.now(UK).isoformat())
+            return f"Noted: {aid} is booked, so no more follow-ups will go to them."
+        state = json.loads(store.r.hget(CHASE, aid) or "{}")
+        state["stop"] = what == "stop"
+        if what == "restart":
+            state["n"] = 0
+            store.r.hset(APPROVED_AT, aid, datetime.now(UK).isoformat())
+        store.r.hset(CHASE, aid, json.dumps(state))
+        return (f"Follow-ups stopped for {aid}." if what == "stop"
+                else f"Follow-ups restarted for {aid}: first reminder in {CHASE_DAYS[0]} days if they haven't booked.")
     pm = re.match(r"^guest\s+probe\s+(\d+)$", t)
     if pm:
         return probe(int(pm.group(1)))
@@ -492,6 +696,10 @@ def _safe(store, send) -> None:
         print("[expert sessions]", check(store, send))
     except Exception as exc:
         print("[expert sessions failed]", exc)
+        try:  # a Clustdoc listing hiccup must not stop the follow-ups
+            print("[expert chase]", chase(store, send))
+        except Exception as exc2:
+            print("[expert chase failed]", exc2)
         if store.r and not store.r.set("wln:expert_err", "1", nx=True, ex=6 * 3600):
             return
         try:

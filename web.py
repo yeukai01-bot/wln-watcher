@@ -41,8 +41,12 @@ HELP = (
     "recorded 123 after a session: posts, graphics, guest pack and write-up are all done for you.\n"
     "When a guest books you get an alert; their Guest Brief (questions ready) comes the Tuesday before at 4pm.\n"
     "briefs lists booked sessions; brief 123 resends that guest's brief.\n"
-    "waitlist add 123 puts a guest on the waiting list (when they reply \"waiting list\"); waitlist shows it; "
-    "waitlist remove 123 takes them off. A cancelled Thursday is emailed to everyone on it.\n\n"
+    "waitlist shows the waiting list; waitlist add 123 / waitlist remove 123 change it. A guest who emails back "
+    "\"waiting list\" is added automatically. A cancelled Thursday is emailed to everyone on it.\n"
+    "Approved guests who don't book get a reminder email after 3 days and a last one after 7; at 10 days you're "
+    "told to give them a call. Any email reply from them pauses the reminders and comes to you here.\n"
+    "approved shows every approved guest and whether they've booked. guest booked 123 (booked another way), "
+    "guest stop 123 (no more reminders), guest restart 123 (start the reminders again).\n\n"
     "Report radar (CQC outreach):\n"
     "Each service comes with a free Report Review. Read it, then tap Open email: it opens in Gmail, ready to send. You press Send.\n"
     "sent P1 P3 records that you sent those.\n"
@@ -654,6 +658,12 @@ def gmail_inbound():
     subject = request.args.get("subject", "")
     thread = request.args.get("thread", "")
     body = request.get_data(as_text=True)[:8000]
+    try:  # replies from approved Expert Session guests: waiting list, pause follow-ups
+        import expert_sessions
+
+        expert_sessions.on_guest_reply(store, sender, subject, body, telegram.send_message)
+    except Exception as exc:
+        print("[expert guest reply failed]", exc)
     try:
         result = gmail_alerts.handle(sender, subject, body, thread, telegram.send_message)
     except Exception as exc:  # never make Make retry forever

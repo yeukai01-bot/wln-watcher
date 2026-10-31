@@ -267,6 +267,7 @@ def check(store, send, force: bool = False) -> str:
                 if app:
                     store.r.hdel(WAITLIST, str(app["id"]))
                     es._tag(app["id"], "Expert Session - Booked")
+                    store.r.hset(es.BOOKED_APPS, str(app["id"]), datetime.now(UK).isoformat())
                     try:
                         es._cd("PATCH", f"/applications/{app['id']}", json={"stage": "3. Approved - session booked"})
                     except Exception:
@@ -309,6 +310,9 @@ def check(store, send, force: bool = False) -> str:
         if first_run:
             store.r.set(BOOKED + ":init", "1")
             return f"first run: recorded {len(current)} existing entries, no alerts"
+        if not events and any(not b.get("skip") for b in known.values()):
+            # an empty calendar feed is far more likely a feed hiccup than every guest cancelling at once
+            return "calendar feed returned no Expert Session entries; cancellations not processed this time"
         for uid, b in known.items():
             if uid in current:
                 continue
@@ -317,8 +321,16 @@ def check(store, send, force: bool = False) -> str:
             except Exception:
                 future = False
             if future and not b.get("skip"):
+                again = ""
+                if b.get("app_id"):  # they're unbooked again, so the follow-up reminders pick them back up
+                    aid = str(b["app_id"])
+                    store.r.hdel(es.BOOKED_APPS, aid)
+                    store.r.hset(es.APPROVED_AT, aid, now.isoformat())
+                    store.r.hset(es.CHASE, aid, json.dumps({"n": 0}))
+                    again = (f" If they don't rebook, they'll get a reminder in {es.CHASE_DAYS[0]} days "
+                             f"(reply 'guest stop {aid}' to stop that).")
                 send(f"Expert Session cancelled: {b.get('name') or 'guest'}, {_when(b['start'])}. "
-                     "That Thursday is free again." + _offer_waitlist(store, b["start"]))
+                     "That Thursday is free again." + again + _offer_waitlist(store, b["start"]))
                 notes.append(f"cancelled {uid}")
             store.r.hdel(BOOKED, uid)
         return f"checked {len(events)} entries; " + (", ".join(notes) or "nothing new")
