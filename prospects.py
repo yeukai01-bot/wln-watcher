@@ -127,6 +127,7 @@ def qualify(loc: dict, stats: dict | None = None) -> dict | None:
         "region": region,
         "local_authority": loc.get("localAuthority") or "",
         "town": loc.get("postalAddressTownCity") or "",
+        "postcode": loc.get("postalCode") or "",
         "phone": loc.get("mainPhoneNumber") or "",
         "website": loc.get("website") or "",
         "cqc_page": f"https://www.cqc.org.uk/location/{loc.get('locationId')}",
@@ -280,6 +281,9 @@ NAME_STOPWORDS = {"the", "and", "of", "ltd", "limited", "llp", "plc", "care", "h
                   "lane", "court", "lodge", "centre", "center", "branch", "supported", "living", "support"}
 
 
+UK_POSTCODE_RX = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[ABD-HJLNP-UW-Z]{2}\b")
+
+
 def _name_words(*names: str) -> set:
     words = set()
     for n in names:
@@ -311,9 +315,21 @@ def domain_is_this_service(domain: str, p: dict) -> tuple[bool, str]:
         return False, f"could not open {domain} to confirm it"
     if not any(w in text for w in CARE_WORDS):
         return False, f"{domain} is not a care website"
-    words = _name_words(p.get("location_name", ""), p.get("provider_name", ""))
+    # 31 Oct 2026: "Emmanuel Care Home Ltd" (Hessle) resolved to emmanuelhome.org, a personal care home in
+    # Pennsylvania. It talks about care and shares the name, so the site must also be in the UK and in the
+    # right place: the service's own postcode, or its town, or a UK signal plus its name.
+    postcode = re.sub(r"\s+", "", (p.get("postcode") or "").lower())
+    if postcode and postcode in re.sub(r"\s+", "", text):
+        return True, ""
     town = (p.get("town") or "").lower().strip()
-    if any(w in text for w in words) or (town and town in text):
+    if town and len(town) >= 4 and town in text:
+        return True, ""
+    uk = (domain.endswith(".uk") or bool(UK_POSTCODE_RX.search(text.upper())) or "+44" in text
+          or "united kingdom" in text or "england" in text)
+    if not uk:
+        return False, f"{domain} does not look like a UK service (no UK postcode, phone or address)"
+    words = _name_words(p.get("location_name", ""), p.get("provider_name", ""))
+    if any(w in text for w in words):
         return True, ""
     return False, f"{domain} does not mention this service, its owner or its town"
 
@@ -435,6 +451,7 @@ def build(item):
         "rating": info["rating"], "report_date": detail.get("published") or "recently",
         "weak_key_questions": detail.get("weak", []), "service_type": services, "region": region,
         "local_authority": loc.get("localAuthority") or "", "town": loc.get("postalAddressTownCity") or "",
+        "postcode": loc.get("postalCode") or "",
         "phone": loc.get("mainPhoneNumber") or "", "website": loc.get("website") or "",
         "cqc_page": f"https://www.cqc.org.uk/location/{lid}",
         "registered_manager": next(

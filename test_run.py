@@ -237,7 +237,10 @@ class _R:
     def __init__(s, t, c=200): s.text=t; s.status_code=c
 _pages = {"https://sonicgold.net": "Sonic Gold, a multidisciplinary creative practice: creative direction and sound-based storytelling.",
           "https://chimescare.test": "The Chimes Residential Home in Stoke-on-Trent: residential care for older people, CQC registered.",
-          "https://othercare.test": "Willow Lodge care home in Leeds, nursing and dementia care."}
+          "https://othercare.test": "Willow Lodge care home in Leeds, nursing and dementia care.",
+          "https://emmanuelhome.org": "Emmanuel Home Personal Care, senior care and activities. 800 Priestley Ave Northumberland, PA 17857 call 570-473-0500",
+          "https://emmanuelcare.test": "Emmanuel House residential care home, Hull Road, HU13 9LZ. Call 01482 649749.",
+          "https://ukcare.test": "Emmanuel care services, England. Registered in England and Wales."}
 _real_get = pr.requests.get
 pr.requests.get = lambda url, headers=None, timeout=None: _R(_pages.get(url, ""), 200 if url in _pages else 404)
 _p = {"location_name": "The Chimes Residential Home", "provider_name": "Sonic Gold Limited", "town": "Stoke-on-Trent"}
@@ -245,8 +248,13 @@ ok, why = pr.domain_is_this_service("sonicgold.net", _p)
 assert not ok and "not a care website" in why, why
 assert pr.domain_is_this_service("chimescare.test", _p)[0]
 ok, why = pr.domain_is_this_service("othercare.test", _p)
-assert not ok and "does not mention" in why, why
+assert not ok and ("does not mention" in why or "UK" in why), why
 assert not pr.domain_is_this_service("gmail.com", _p)[0]
+_e = {"location_name": "Emmanuel House Care Home", "provider_name": "Emmanuel Care Home Ltd", "town": "Hessle", "postcode": "HU13 9LZ"}
+ok, why = pr.domain_is_this_service("emmanuelhome.org", _e)
+assert not ok and "UK" in why, why
+assert pr.domain_is_this_service("emmanuelcare.test", _e)[0]
+assert pr.domain_is_this_service("ukcare.test", {**_e, "postcode": ""})[0]
 assert not pr.domain_is_this_service("missing.test", _p)[0]
 pr.requests.get = _real_get
 print("DOMAIN CHECK TESTS PASSED")
