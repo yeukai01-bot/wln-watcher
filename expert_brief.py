@@ -257,8 +257,16 @@ def check(store, send, force: bool = False) -> str:
             if first_run:
                 _save(store, uid, {"start": start_iso, "skip": True})
                 continue
+            if b is not None and not b.get("skip") and not b.get("email") and not b.get("app_id"):
+                # 1 Nov 2026: a leave block whose note said "Expert Session" was taken for a booking.
+                # A real Vectera booking always carries the guest's email, so quietly ignore anything without one.
+                b = {"start": start_iso, "skip": True, "why": "no guest email"}
+                _save(store, uid, b)
             if b is None:
                 g = _guest(ev)
+                if not g["email"]:
+                    _save(store, uid, {"start": start_iso, "skip": True, "why": "no guest email"})
+                    continue
                 app = _find_app(store, g["name"], g["email"]) if es._token() else None
                 answers = es._answers(es._items(app["id"])) if app else ""
                 b = {"start": start_iso, "name": g["name"] or (es._name(app) if app else ""), "email": g["email"],

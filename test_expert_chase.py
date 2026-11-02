@@ -92,3 +92,30 @@ assert es.on_guest_reply(st4, "stranger@x.com", "hi", "waiting list", send) == "
 assert es.handle("guest booked 101", st4).startswith("Noted") and st4.r.hexists(es.BOOKED_APPS, "101")
 assert "101: booked" in es.handle("approved", st4)
 print("GUEST REPLY TESTS PASSED")
+
+# calendar entries without a guest email are never treated as bookings (1 Nov 2026 false alert)
+import expert_brief as eb
+class FR2(FakeRedis):
+    def __init__(s): super().__init__(); s.kv = {}
+    def set(s, k, v, nx=False, ex=None):
+        if nx and k in s.kv: return False
+        s.kv[k] = v; return True
+    def exists(s, k): return k in s.kv or k in s.h
+st5 = Store(); st5.r = FR2()
+st5.r.set(eb.BOOKED + ":init", "1")
+start = datetime.now(UK) + timedelta(days=4)
+leave = {"uid": "leave1", "start": start, "summary": "Annual leave - no calls",
+         "description": "Blocks sam.ai booking links. Expert Session slot open 4:00-4:45pm.", "attendees": []}
+real = {"uid": "real1", "start": start + timedelta(hours=16), "summary": "Option 1 Well-Led Network Expert Session",
+        "description": "Booked via Vectera", "attendees": [{"name": "Kevin Humphrys", "email": "ceo@oaklandcare.co.uk"}]}
+eb._events = lambda: [leave, real]
+eb._find_app = lambda store, n, e: None
+sent = []
+out = eb.check(st5, sent.append, force=True)
+assert len([m for m in sent if m.startswith("Expert Session booked")]) == 1 and "Kevin" in sent[0], sent
+assert json.loads(st5.r.hget(eb.BOOKED, "leave1"))["skip"] is True
+# an old false entry already stored is quietly retired, with no brief, reminder or cancel message
+st5.r.hset(eb.BOOKED, "leave1", json.dumps({"start": start.isoformat(), "name": "", "email": "", "vectera": ""}))
+sent.clear(); eb.check(st5, sent.append, force=True)
+assert sent == [] and json.loads(st5.r.hget(eb.BOOKED, "leave1"))["skip"] is True, sent
+print("CALENDAR MATCH TESTS PASSED")
