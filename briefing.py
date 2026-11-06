@@ -193,6 +193,8 @@ def _find(d, names: tuple[str, ...]):
 
 
 def parse_member(payload) -> dict:
+    if isinstance(payload, dict) and isinstance(payload.get("member"), dict):  # Well-Led Network webhook shape
+        payload = payload["member"]
     email = _find(payload, ("email", "user_email", "useremail", "member_email")).lower()
     first = _find(payload, ("first_name", "firstname", "firstName".lower(), "fname"))
     last = _find(payload, ("last_name", "lastname", "lname"))

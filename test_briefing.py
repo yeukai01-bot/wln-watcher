@@ -140,3 +140,11 @@ pv = c.get(f"/briefing/2026-12-07/{briefing.preview_token('2026-12-07')}")
 assert pv.status_code == 200 and b"Hi Yeukai" in pv.data and b"{{" not in pv.data
 assert c.get("/briefing/2026-12-07/nope").status_code == 404
 print("BRIEFING TESTS PASSED")
+
+# 9. the Well-Led Network webhook shape: member fields, never the community name
+wh = {"id": "u", "community": {"id": 12, "name": "Your community"},
+      "member": {"first_name": "", "last_name": "", "name": "Ada Lovelace", "email": "ada@example.com"}}
+assert briefing.parse_member(wh) == {"email": "ada@example.com", "first": "Ada", "last": "Lovelace"}
+wh["member"]["first_name"] = "Ada"; wh["member"]["last_name"] = "L"
+assert briefing.parse_member(wh) == {"email": "ada@example.com", "first": "Ada", "last": "L"}
+print("WEBHOOK SHAPE TEST PASSED")
