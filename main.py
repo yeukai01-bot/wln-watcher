@@ -249,6 +249,18 @@ def main() -> None:
             telegram.send_message(msg)
     except Exception as exc:
         print("linkedin backfill failed:", exc)
+    try:  # Weekly Well-Led Briefing: Monday draft, scheduled in Brevo for Tuesday 07:30
+        import briefing
+        from store import Store
+
+        print("[briefing]", briefing.monday(Store(), telegram))
+    except Exception:
+        tb = traceback.format_exc()
+        print(tb)
+        try:
+            telegram.send_message("The weekly briefing could not be drafted this morning, so nothing is scheduled yet:\n\n" + tb[-1500:])
+        except Exception:
+            pass
     backlog_notice()
     sys.exit(rc)
 

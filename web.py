@@ -58,6 +58,8 @@ HELP = (
     "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
     "skip L2 drops one for good.\n\n"
     "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
+    "Weekly Well-Led Briefing (Brevo, Tuesdays 07:30): drafted Monday morning and sent here first.\n"
+    "briefing shows this week's; briefing hold stops it; briefing go puts it back on; briefing setup shows the member sync link.\n\n"
     "Self-Check scores: readers who click their total at welllednetwork.com/self-check-score arrive here; 0 to 12 means call them within 24 hours.\n\n"
     "Bookings (Trafft and SAM.AI):\n"
     "New bookings, cancellations and reschedules arrive here as they happen, with a reminder before each call. "
@@ -149,6 +151,11 @@ def handle_text(text: str) -> str:
         eb = None
     if eb is not None:
         return eb
+    import briefing
+
+    bf = briefing.handle(text, store)
+    if bf is not None:
+        return bf
     t = text.strip().lower()
     latest = store.latest()
     if t in ("help", "/start", "/help", "?"):
@@ -644,6 +651,50 @@ def selfcheck_score():
         telegram.send_message(f"A Self-Check score arrived but could not be processed ({type(exc).__name__}).")
         result = {"ok": True}
     return (jsonify(result), 200, cors)
+
+
+@app.route("/wln/members/<token>", methods=["POST", "OPTIONS"])
+def wln_members(token: str):
+    """Well-Led Network webhooks (New signup, Member removed, Account suspended) and the one-off member
+    import: keeps the Brevo list behind the weekly briefing in step with the community."""
+    import briefing
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type",
+            "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        return ("", 204, cors)
+    if not hmac.compare_digest(token, briefing.member_token()):
+        abort(404)
+    payload = request.get_json(silent=True, force=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    event = request.headers.get("X-Event") or request.args.get("event", "")
+    try:
+        result = briefing.on_member_event(store, event, payload, telegram.send_message)
+    except Exception as exc:  # never make the community retry; tell Yeukai instead
+        telegram.send_message(f"A Well-Led Network member update could not be passed to Brevo ({type(exc).__name__}: {str(exc)[:150]}).")
+        result = {"ok": True}
+    return (jsonify(result), 200, cors)
+
+
+@app.get("/briefing/<week>/<token>")
+def briefing_preview(week: str, token: str):
+    """The scheduled weekly briefing exactly as members will see it."""
+    import json as _json
+
+    import briefing
+
+    if not hmac.compare_digest(token, briefing.preview_token(week)):
+        abort(404)
+    raw = store.r.get(briefing.K_WEEK + week) if store.r else None
+    if not raw:
+        abort(404)
+    rec = _json.loads(raw)
+    page = briefing.render(rec["briefing"], rec["url"])
+    page = page.replace('{{ contact.FIRSTNAME | default : "there" }}', "Yeukai").replace("{{ unsubscribe }}", "#")
+    return page
 
 
 @app.post("/gmail/inbound")
