@@ -595,13 +595,19 @@ def run(store, telegram) -> None:
             + (f" Last Sendspark error: {sendspark.LAST_ERROR[0]}" if sendspark.LAST_ERROR[0] else ""))
            if sendspark.enabled() else "\n\nPersonal videos are off until the Sendspark settings are added in Render.")
         + (f"\n\nsam.ai import file for today (Leads, folder CQC Report Radar): {csv_link}" if csv_link else "")
-        + ("\n\nPrinted letters: reply 'letters' to read today's letters, then 'post all' or 'post L1 L3' to have them printed and posted."
-           if os.getenv("INTELLIPRINT_API_KEY") else "")
     )
     if sb_msg:
         telegram.send_message(sb_msg)
     for p in made:
         telegram.send_message(prospect_message(p))
+    if os.getenv("STANNP_API_KEY"):  # printed letter + review for each new lead, posted only after Yeukai replies 'post all'
+        try:
+            import letters
+
+            telegram.send_message(letters.list_letters(store, REPLIES_URL))
+        except Exception as exc:
+            print("letters list failed:", exc)
+            telegram.send_message(f"Printed letters could not be listed this morning ({type(exc).__name__}). Reply 'letters' to try again.")
     try:  # same prospects on LinkedIn: added to the Sendpilot CQC Radar campaign when found
         import linkedin_sp
 

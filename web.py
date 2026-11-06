@@ -53,10 +53,10 @@ HELP = (
     "leads shows today's radar list and what has been sent.\n"
     "remove name@example.com stops the radar ever drafting to that address again.\n"
     "review <CQC link> writes a free Report Review, email and video for any service, e.g. review https://www.cqc.org.uk/location/1-123456789\n\n"
-    "Printed letters (7-day trial):\n"
-    "letters shows the letters waiting, each with a link to read it.\n"
-    "post L1 L3 (or post all) prints and posts those through Intelliprint. Nothing is posted without this reply.\n"
-    "skip L2 drops one for good.\n\n"
+    "Printed letters (Stannp, sent with the radar list each morning):\n"
+    "letters shows the letters waiting, each with a link to the exact PDF.\n"
+    "post all (or post L1 L3) prints and posts them through Stannp. Nothing is posted without this reply; held ones only go if you name them.\n"
+    "skip L2 drops one for good. A monthly cap (LETTERS_CAP on Render) stops posting once reached.\n\n"
     "published 3 <link> [short link] marks topic 3 as live if it was published by hand.\n\n"
     "Weekly Well-Led Briefing (Brevo, Tuesdays 07:30): drafted Monday morning and sent here first.\n"
     "briefing shows this week's; briefing hold stops it; briefing go puts it back on; briefing setup shows the member sync link.\n\n"
@@ -356,19 +356,18 @@ def _base_url() -> str:
 
 @app.get("/letter/<pid>/<token>")
 def letter_preview(pid: str, token: str):
-    """Shows Yeukai exactly what a printed letter will say, before he replies 'post'."""
+    """Shows Yeukai the exact PDF that Stannp will print (letter plus review), before he replies 'post'."""
+    from flask import Response
+    import letter_pdf
     import letters
 
     p = store.get_prospect(pid)
     if not p or not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(token, letters.preview_token(pid)):
         abort(404)
     letters.ensure_address(p)
-    a = letters.address_for(p)
-    addr = "<br>".join(__import__("html").escape(x) for x in [a["name"], *a["line"].split(", "), a["postcode"]])
-    return (f"<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>Letter preview</title></head>"
-            f"<body style='background:#eee;margin:0;padding:16px'><div style='background:#fff;max-width:640px;margin:auto;padding:32px;box-shadow:0 1px 4px #0003'>"
-            f"<p style='font-family:sans-serif;font-size:10pt;color:#666'>Address (printed by Intelliprint in the envelope window):<br>{addr}</p><hr>"
-            f"{letters.letter_html(p)}</div></body></html>")
+    pdf, _ = letter_pdf.build_pdf(p)
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=letter-{pid}.pdf"})
 
 
 @app.get("/m/<pid>")

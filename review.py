@@ -91,8 +91,14 @@ Reply with JSON only:
  "underneath": ["2 or 3 likely root causes connecting the findings"],
  "fix_first": ["3 actions for the next 30 days, in the order you would do them"],
  "evidence": ["2 or 3 things that would show the change is working"],
+ "working": "one or two sentences on what the report says is already working, taken only from the report; '' if the report text gives nothing",
+ "fixes": [{"title": "the fix as a short instruction, under 10 words", "why": "one sentence tying it to the findings",
+            "steps": ["3 concrete steps a manager can start this week, one sentence each"],
+            "proof": "one sentence: what they will see when it is working"}],
+ "questions": ["3 questions an inspector is likely to ask next time, one per fix, in the inspector's words"],
  "subject": "email subject under 60 characters, no rating in it, e.g. 'A free review of your CQC report, Oak House'"
-}"""
+}
+"fixes" has exactly 3 items, in the same order as fix_first."""
 
 
 def write_review(p: dict, text: str) -> dict:
@@ -102,11 +108,16 @@ def write_review(p: dict, text: str) -> dict:
         f"Key questions rated below Good: {', '.join(p.get('weak_key_questions') or []) or 'not listed'}\n\n"
         f"REPORT TEXT:\n{text or '(the full report could not be read; only the ratings above are known)'}"
     )
-    data = ai._json(ai._ask(REVIEW_SYSTEM, user, max_tokens=2500))
+    data = ai._json(ai._ask(REVIEW_SYSTEM, user, max_tokens=4000))
     clean = lambda s: re.sub(r"\s*[–—]\s*", ", ", str(s)).replace(" - ", ", ").strip()
     out = {k: [clean(x) for x in (data.get(k) or [])][:4] for k in ("found", "underneath", "fix_first", "evidence")}
     out["video_finding"] = clean(data.get("video_finding", ""))
     out["subject"] = clean(data.get("subject", "")) or f"A free review of your CQC report, {p['location_name']}"
+    out["working"] = clean(data.get("working", ""))
+    out["fixes"] = [{"title": clean(f.get("title", "")), "why": clean(f.get("why", "")),
+                     "steps": [clean(s) for s in (f.get("steps") or [])][:3], "proof": clean(f.get("proof", ""))}
+                    for f in (data.get("fixes") or []) if isinstance(f, dict)][:3]
+    out["questions"] = [clean(q) for q in (data.get("questions") or [])][:3]
     out["from_report_text"] = bool(text)
     return out
 

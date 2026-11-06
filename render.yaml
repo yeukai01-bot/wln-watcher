@@ -38,6 +38,12 @@ envVarGroups:
         sync: false            # the id of the Sendpilot "CQC Radar" campaign
       - key: SENDPILOT_SENDER_ID
         sync: false            # Yeukai's LinkedIn sender id in Sendpilot
+      - key: STANNP_API_KEY
+        sync: false            # paste in Render: Stannp, Settings, API Settings (printed radar letters)
+      - key: LETTERS_CLASS
+        value: second          # second or first class post for radar letters
+      - key: LETTERS_CAP
+        value: "150"           # pounds a month; posting stops once reached
       - key: GMAIL_ACCOUNT
         value: kajidoricollective@gmail.com   # Open email opens Gmail compose in this account
 
