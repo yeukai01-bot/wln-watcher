@@ -318,7 +318,7 @@ def _email(contact: dict, subject: str, text: str) -> str:
     if not to:
         return "no email (no address on the application)"
     first = (contact or {}).get("firstname") or ""
-    body = f"Hi {first},\n\n{text}\n\nWarm regards\nYeukai Kajidori\nThe Kajidori Collective\nhttps://www.welllednetwork.com/blog"
+    body = f"Hi {first},\n\n{text}\n\nKind regards\nYeukai Kajidori\nFounder, Well-Led Network\nCreator of the Well-Led and Safe Supported Living Framework\nhttps://www.welllednetwork.com/blog\nWork with me: https://shor.by/wln-work-with-me\nThe Kajidori Collective Ltd"
     html = "<br>".join(_link(l) for l in body.split("\n"))
     r = requests.post(f"{BREVO}/smtp/email", timeout=30,
                       headers={"api-key": key, "accept": "application/json", "content-type": "application/json"},

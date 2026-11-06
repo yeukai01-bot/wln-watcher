@@ -386,7 +386,7 @@ Rules:
   other managers through reports like theirs, and do not invent results).
 - Address the registered manager by first name if one is given, otherwise "Dear [Service name] team".
 - Include this final line exactly: "If you would rather not hear from me again, just reply 'remove' and I will not contact you."
-- Sign off: Kind regards, Yeukai Kajidori, The Kajidori Collective, https://www.welllednetwork.com/blog, kajidoricollective@gmail.com
+- Sign off, one item per line: Kind regards / Yeukai Kajidori / Founder, Well-Led Network / Creator of the Well-Led and Safe Supported Living Framework / https://www.welllednetwork.com/blog / Work with me: https://shor.by/wln-work-with-me / The Kajidori Collective Ltd
 - After the sign off, end with this P.S. exactly: "P.S. Want quick answers to your CQC questions? Join the Well-Led Network, my free WhatsApp group for UK care leaders. Managers post their questions and I answer them there: https://shor.by/wln-whatsapp"
 
 Reply in exactly this format:

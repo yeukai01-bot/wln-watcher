@@ -153,7 +153,7 @@ def email_body(p: dict, rv: dict, review_link: str, video_link: str = "") -> str
         "A little about me: I have spent 23 years in UK health and social care, 15 of them as a CQC Registered "
         "Manager, and I have led two services to a Good rating.",
         "If you would rather not hear from me again, just reply 'remove' and I will not contact you.",
-        "Kind regards\nYeukai Kajidori\nThe Kajidori Collective\nhttps://www.welllednetwork.com/blog\nkajidoricollective@gmail.com",
+        "Kind regards\nYeukai Kajidori\nFounder, Well-Led Network\nCreator of the Well-Led and Safe Supported Living Framework\nhttps://www.welllednetwork.com/blog\nWork with me: https://shor.by/wln-work-with-me\nThe Kajidori Collective Ltd",
         WHATSAPP_PS,
     ]
     return "\n\n".join(parts)
