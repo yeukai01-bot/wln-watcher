@@ -79,7 +79,11 @@ HELP = (
     "Anyone who asks to be removed is blocked straight away and you are told.\n\n"
     "Gmail replies (kajidoricollective):\n"
     "When a real person emails the inbox, an alert arrives here with who they are, what they want and a link to the email. "
-    "Automated mail is ignored. gmail key shows the key for the Make scenario."
+    "Automated mail is ignored. gmail key shows the key for the Make scenario.\n\n"
+    "Cold email agent (NotiQ):\n"
+    "Every reply to the agent's emails arrives here, marked HOT LEAD, NEEDS YOU or just for your information. "
+    "The agent answers ordinary replies itself (up to 3 per person); NEEDS YOU means it has left that one for you. "
+    "You are also told if a sending inbox disconnects. notiq key shows the webhook link to paste into NotiQ."
 )
 
 
@@ -254,6 +258,10 @@ def handle_text(text: str) -> str:
         import gmail_alerts
         return ("Paste this into the Make scenario's HTTP header as Authorization: Bearer <key>\n\n"
                 + gmail_alerts.inbound_key())
+    if t in ("notiq key", "/notiqkey"):
+        import notiq_alerts
+        return ("Paste this link into NotiQ, API & MCP, Webhooks (events: reply.received and account.disconnected):\n\n"
+                + notiq_alerts.webhook_url())
     return "I did not understand that. " + HELP
 
 
@@ -718,6 +726,26 @@ def gmail_inbound():
         result = gmail_alerts.handle(sender, subject, body, thread, telegram.send_message)
     except Exception as exc:  # never make Make retry forever
         result = f"error: {type(exc).__name__}"
+    return jsonify({"ok": True, "result": result})
+
+
+@app.post("/notiq/<key>")
+def notiq_webhook(key: str):
+    """NotiQ webhooks: replies to the cold email agent and disconnected inboxes -> Telegram."""
+    import notiq_alerts
+
+    if not os.getenv("APPROVALS_KEY") or not hmac.compare_digest(notiq_alerts.webhook_key(), key):
+        abort(403)
+    payload = request.get_json(silent=True, force=True) or {}
+    try:
+        result = notiq_alerts.handle(store, payload, telegram.send_message)
+    except Exception as exc:  # never make NotiQ retry forever; tell Yeukai instead
+        result = f"error: {type(exc).__name__}"
+        try:
+            telegram.send_message("A NotiQ email reply arrived but could not be read. Check the inbox: "
+                                  "https://app.notiq.io/inbox")
+        except Exception:
+            pass
     return jsonify({"ok": True, "result": result})
 
 
