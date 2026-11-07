@@ -81,8 +81,8 @@ HELP = (
     "When a real person emails the inbox, an alert arrives here with who they are, what they want and a link to the email. "
     "Automated mail is ignored. gmail key shows the key for the Make scenario.\n\n"
     "Cold email agent (NotiQ):\n"
-    "Every reply to the agent's emails arrives here, marked HOT LEAD, NEEDS YOU or just for your information. "
-    "The agent answers ordinary replies itself (up to 3 per person); NEEDS YOU means it has left that one for you. "
+    "Only replies worth your time arrive here: HOT LEAD (a real buying signal) or NEEDS YOU (sensitive, or asks for you). "
+    "Out of office, no thanks, thank-yous and Tuesday requests stay quiet; the agent handles them and they are counted in the Monday review. "
     "You are also told if a sending inbox disconnects. notiq key shows the webhook link to paste into NotiQ."
 )
 

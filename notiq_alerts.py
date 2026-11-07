@@ -55,8 +55,9 @@ def _bump(store, lead: str) -> int:
     return _counts[lead]
 
 
-AUTO = re.compile(r"(out of (the )?office|automatic reply|auto-?reply|annual leave|on leave until|"
-                  r"no longer (work|with)|has left|undeliverable|delivery status|mailbox (is )?full)", re.I)
+AUTO = re.compile(r"(out of (the )?office|\booo\b|automatic reply|auto-?reply|auto response|autoresponse|"
+                  r"on annual leave|limited access to (my )?email|undeliverable|delivery status notification|"
+                  r"delivery has failed|mailbox (is )?full|we have received your (email|enquiry)|ticket (number|#))", re.I)
 
 
 def screen(name: str, company: str, subject: str, text: str) -> dict:
@@ -67,14 +68,25 @@ def screen(name: str, company: str, subject: str, text: str) -> dict:
         out = ai._json(ai._ask(
             "You triage replies to cold emails sent by Yeukai Kajidori's email agent. Yeukai is a UK CQC "
             "consultant and founder of the free Well-Led Network; the emails offer a free CQC Inspection "
-            "Readiness Scorecard, the WhatsApp group, or 'reply yes for the three gaps'. The agent answers "
-            "ordinary replies itself, but it does NOT answer: complaints, anger, legal threats, safeguarding "
-            "concerns, a person at risk, a death, anything sensitive, or someone asking for Yeukai personally "
-            "or for a price he must quote. Classify the reply. "
+            "Readiness Scorecard, the WhatsApp group, or 'reply yes for the three gaps'. Yeukai only wants to be "
+            "told about replies worth his time, so be strict. Kinds:\n"
+            "hot = a real buying signal from a care provider: asks for the three gaps, a call or a meeting, asks "
+            "for help with a CQC rating (Requires Improvement, Inadequate), an inspection, registration, an action "
+            "plan or enforcement, asks what working with him involves or costs, or describes a live problem they "
+            "want solved. A polite 'thanks', 'will have a look', 'interesting' or 'I've joined the group' is NOT hot.\n"
+            "sensitive = complaint, anger, legal threat, safeguarding concern, a person at risk, a death, a "
+            "data or GDPR complaint, or a demand to know where their details came from.\n"
+            "question = a genuine CQC or care question the agent can answer.\n"
+            "tuesday = asks for the Tuesday briefing or tips.\n"
+            "not_interested = no thanks, unsubscribe, remove me, wrong person, not relevant.\n"
+            "auto = out of office, on leave, automatic reply, left the company, mailbox full, delivery failure, "
+            "ticket or helpdesk acknowledgement, any message not typed by a person.\n"
+            "other = anything else (polite thanks, vendors pitching him, chit-chat).\n"
+            "needs_yeukai = true only if the reply is sensitive, or the person asks for Yeukai himself, a price, "
+            "or a decision only he can make. "
             'Reply only with JSON: {"kind": "hot"|"question"|"tuesday"|"not_interested"|"auto"|"sensitive"|"other", '
             '"needs_yeukai": true|false, "summary": "one short line on what they said or want", '
-            '"next": "one short line on what Yeukai should do, or \'nothing, the agent will reply\'"}. '
-            "hot = wants help, a call, the three gaps, or is clearly interested in working together.",
+            '"next": "one short line on what Yeukai should do, or \'nothing, the agent will reply\'"}.',
             f"From: {name} ({company})\nSubject: {subject}\n\n{(text or '')[:3500]}",
             max_tokens=300,
         ))
@@ -116,8 +128,14 @@ def handle(store, payload: dict, send) -> str:
     if kind == "auto":
         return "skipped: auto reply"
 
-    handed_over = n > AGENT_REPLY_LIMIT
+    # The agent has used its replies; only worth his time if the person is still engaged.
+    handed_over = n > AGENT_REPLY_LIMIT and kind in ("hot", "question", "sensitive")
     needs_you = bool(s.get("needs_yeukai")) or handed_over or kind == "sensitive"
+
+    # Quiet unless it is worth his time: HOT LEAD or NEEDS YOU only. Everything else stays in the
+    # NotiQ inbox (the agent handles it) and is counted in the Monday review.
+    if not (kind == "hot" or needs_you):
+        return "quiet: " + kind
 
     if kind == "sensitive":
         head = "NEEDS YOU: sensitive reply, the agent will not answer it"
@@ -125,14 +143,8 @@ def handle(store, payload: dict, send) -> str:
         head = f"NEEDS YOU: reply {n} from this lead, the agent has handed it to you"
     elif kind == "hot":
         head = "HOT LEAD replied" + (" (needs you)" if needs_you else ", the agent is answering")
-    elif needs_you:
-        head = "NEEDS YOU: email reply"
-    elif kind == "not_interested":
-        head = "Not interested (the agent will confirm and stop)"
-    elif kind == "tuesday":
-        head = "Wants the Tuesday briefing (the agent will send the join link)"
     else:
-        head = "Email reply, the agent is answering"
+        head = "NEEDS YOU: email reply"
 
     nxt = s.get("next") or ""
     if needs_you and (not nxt or nxt.lower().startswith("nothing")):
