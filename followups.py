@@ -24,6 +24,9 @@ Telegram:
   hold F1 F3    keeps those off today's send (they come back tomorrow)
   fu stop F2    stops the series for that person for good (also: fu stop name@example.com)
   fu pause / fu resume   stops or restarts all follow-ups
+  fu older      one-off: lists older radar prospects (before the 45-day window) who never replied, for a single
+                "how is the action plan going?" email. Nothing is sent until "fu older go"; then 15 go each weekday
+                at 10:45 (each re-checked for a reply first). "fu older stop" pauses it.
 """
 from __future__ import annotations
 
@@ -47,6 +50,8 @@ ACCOUNT = os.getenv("GMAIL_ACCOUNT", "kajidoricollective@gmail.com")
 STATE = "wln:followups"
 BATCH = "wln:fu_batch"
 FLAGS = "wln:fu_flags"
+OLDER = "wln:fu_older"
+OLDER_PER_DAY = int(os.getenv("FOLLOWUP_OLDER_PER_DAY", "15"))
 ANNOUNCE_AT = (8, 30)
 SEND_AT = (10, 30)
 DAILY_CAP = int(os.getenv("FOLLOWUP_DAILY_CAP", "20"))
@@ -195,9 +200,22 @@ def build(step: str, s: dict, today: date) -> str | None:
                   "https://shor.by/wln-work-with-me",
                   "Or just reply \"yes\" and we'll find 20 minutes to talk it through. This is my last note for now, "
                   "and either way I wish you and the team well."]
+    elif step == "old":
+        parts += [f"A while back I sent you a short, free review of the CQC report for {s.get('service') or 'your service'}. "
+                  "I wanted to check in now some time has passed. How are you getting on with the action plan?",
+                  "In my experience plans usually stall in one of three places: the same one or two people own every action, "
+                  "the work is happening but nobody is filing the evidence, or the wider team still doesn't know what has "
+                  "changed. If any of that sounds familiar, you're not alone, and it's very fixable.",
+                  "That's exactly the work I do with providers: helping them deliver the plan they've written, week by week, "
+                  "so that when CQC returns the improvement is clear to see. It's built on the same habits that took a "
+                  "service I led from a local authority embargo back to green.",
+                  f"If you'd like to see how that could look for {s.get('service') or 'your service'}, everything is here: "
+                  "https://shor.by/wln-work-with-me",
+                  "Or just reply \"yes\" and we'll find 20 minutes to talk it through. I won't follow up again after this, "
+                  "and either way I wish you and the team well."]
     else:
         return None
-    if step != LAST:
+    if step not in (LAST, "old"):
         parts.append(OPT_OUT)
     parts += [SIGNATURE, WHATSAPP_PS]
     return "\n\n".join(parts)
@@ -354,6 +372,102 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
     return due[:DAILY_CAP]
 
 
+# ------------------------------------------------------------------ one-off check-in for older prospects
+
+def older_candidates(store, imap_factory=None) -> list[str]:
+    """Radar prospects from before the 45-day window who were emailed, never replied and never had a follow-up."""
+    suppressed = set(e.lower() for e in store.suppressed())
+    allst = states(store)
+    cutoff = time.time() - LOOKBACK_DAYS * 86400
+    cands = {}
+    for p in store.prospects():
+        e = (p.get("email") or "").strip().lower()
+        if e and p.get("can_email") and p.get("created", 0) < cutoff and e not in suppressed:
+            cands.setdefault(e, p)
+    out = []
+    m = (imap_factory or _imap)()
+    try:
+        for e, p in cands.items():
+            s = allst.get(e) or {"email": e, "steps": {}}
+            if s.get("stopped") or s.get("steps"):
+                continue
+            s.update({"name": p.get("registered_manager") or s.get("name", ""), "service": p.get("location_name", ""),
+                      "report_date": p.get("report_date", ""), "review_url": p.get("review_url", ""),
+                      "code": p.get("code", ""), "prospect_id": p.get("id")})
+            if not s.get("first_sent"):
+                rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
+                found = find_first_email(m, e, rd - timedelta(days=1))
+                if not found:
+                    continue
+                s.update(found)
+            why = has_reply(m, e, s["first_sent"])
+            if why:
+                s["stopped"] = why
+                put_state(store, s)
+                continue
+            put_state(store, s)
+            out.append(e)
+    finally:
+        try:
+            m.logout()
+        except Exception:
+            pass
+    out.sort(key=lambda e: states(store).get(e, {}).get("first_sent", 0), reverse=True)
+    return out
+
+
+def send_older(store, send, today: date, imap_factory=None, sender=None) -> str:
+    o = _get(store, OLDER, {})
+    o["last_run"] = today.isoformat()
+    _set(store, OLDER, o)
+    done = set(o.get("done", []))
+    todo = [e for e in o.get("queue", []) if e not in done][:OLDER_PER_DAY]
+    if not todo:
+        o["approved"] = False
+        _set(store, OLDER, o)
+        return "older batch finished"
+    sender = sender or send_email
+    allst, sent, skipped = states(store), [], []
+    m = (imap_factory or _imap)()
+    try:
+        for e in todo:
+            done.add(e)
+            s = allst.get(e)
+            if not s or s.get("stopped") or s.get("steps"):
+                continue
+            why = has_reply(m, e, s["first_sent"])
+            if why:
+                s["stopped"] = why
+                put_state(store, s)
+                skipped.append(f"{s.get('name') or e} ({why})")
+                continue
+            try:
+                mid = sender(s, build("old", s, today))
+            except Exception as exc:
+                skipped.append(f"{s.get('name') or e} (send failed: {type(exc).__name__})")
+                continue
+            s.setdefault("steps", {})["old"] = int(time.time())
+            s["stopped"] = "older one-off check-in sent"
+            s["refs"] = [x for x in (s.get("refs") or [s.get("orig_msgid")]) if x] + [mid]
+            put_state(store, s)
+            sent.append(f"{s.get('name') or e}, {s.get('service', '')}")
+            time.sleep(20)
+    finally:
+        try:
+            m.logout()
+        except Exception:
+            pass
+    o["done"] = sorted(done)
+    left = len([e for e in o.get("queue", []) if e not in done])
+    if not left:
+        o["approved"] = False
+    _set(store, OLDER, o)
+    send(("Older one-off check-ins sent from Gmail:\n" + "\n".join(sent) if sent else "No older check-ins sent today.")
+         + ("\n\nNot sent: " + ", ".join(skipped) if skipped else "")
+         + (f"\n\n{left} still to go, next weekday at 10:45." if left else "\n\nThat was the last of the older list."))
+    return f"older sent {len(sent)}"
+
+
 # ------------------------------------------------------------------ the daily rhythm
 
 def _batch_text(store, batch: dict, heading: str) -> str:
@@ -438,6 +552,9 @@ def tick(store, send, now: datetime | None = None) -> str:
         return announce(store, send, today)
     if hm >= SEND_AT and batch.get("date") == today.isoformat() and not batch.get("sent_done"):
         return send_batch(store, send, today)
+    older = _get(store, OLDER, {})
+    if hm >= (SEND_AT[0], SEND_AT[1] + 15) and older.get("approved") and older.get("last_run") != today.isoformat():
+        return send_older(store, send, today)
     return "waiting"
 
 
@@ -529,6 +646,55 @@ def handle(text: str, store) -> str | None:
                 telegram_io.send_message(f"Follow-up check failed: {type(exc).__name__}: {str(exc)[:200]}")
         threading.Thread(target=go, daemon=True).start()
         return "Checking Gmail for who is due a follow-up. It takes a minute; nothing will be sent."
+    if re.match(r"^(?:fu|followups?)\s+older\s+go$", low):
+        o = _get(store, OLDER, {})
+        if not o.get("queue"):
+            return "There is no older list yet. Send fu older first to see who is on it."
+        o["approved"] = True
+        _set(store, OLDER, o)
+        left = [e for e in o["queue"] if e not in o.get("done", [])]
+        return (f"Approved. {len(left)} older prospects will get the one-off check-in, {OLDER_PER_DAY} each weekday at "
+                "10:45, each re-checked for a reply first. fu older stop pauses it.")
+    if re.match(r"^(?:fu|followups?)\s+older\s+stop$", low):
+        o = _get(store, OLDER, {})
+        o["approved"] = False
+        _set(store, OLDER, o)
+        return "Older one-off check-ins paused. fu older go starts them again."
+    if re.match(r"^(?:fu|followups?)\s+older$", low):
+        def go_older():
+            import telegram_io
+            try:
+                emails = older_candidates(store)
+                o = _get(store, OLDER, {})
+                o.update({"queue": emails, "approved": False})
+                o.setdefault("done", [])
+                _set(store, OLDER, o)
+                allst = states(store)
+                if not emails:
+                    telegram_io.send_message("Older radar prospects: nobody found who was emailed and never replied.")
+                    return
+                lines = [f"{i}. {allst[e].get('name') or '(no name)'}, {allst[e].get('service', '')} ({e}), first email "
+                         f"{datetime.fromtimestamp(allst[e]['first_sent'], UK):%d %b}" for i, e in enumerate(emails, 1)]
+                telegram_io.send_message(
+                    f"Older radar prospects who got your free review and never replied ({len(emails)}). Each would get ONE "
+                    "email, as a reply in the original Gmail thread: how is the action plan going, the three places plans "
+                    "stall, and your offer to help them implement it.\n\n"
+                    + "\n\n".join("\n".join(lines[i:i + 25]) for i in range(0, len(lines), 25))
+                    + f"\n\nNothing has been sent. Reply fu older go to send them, {OLDER_PER_DAY} a weekday at 10:45. "
+                      "fu stop name@example.com takes anyone off first. fu older preview 1 shows the email.")
+            except Exception as exc:
+                telegram_io.send_message(f"Older prospects check failed: {type(exc).__name__}: {str(exc)[:200]}")
+        threading.Thread(target=go_older, daemon=True).start()
+        return "Looking through your Gmail for older radar prospects who never replied. The list comes in a minute or two; nothing will be sent."
+    opv = re.match(r"^(?:fu|followups?)\s+older\s+preview\s+(\d+)$", low)
+    if opv:
+        o = _get(store, OLDER, {})
+        q = o.get("queue", [])
+        n = int(opv.group(1))
+        if not 1 <= n <= len(q):
+            return "That number is not on the older list."
+        s = states(store).get(q[n - 1])
+        return f"To: {s['email']}\nSubject: {subject_for(s)}\n\n{build('old', s, today)}"
     # status
     allst = states(store)
     active = [s for s in allst.values() if s.get("first_sent") and not s.get("stopped")]
