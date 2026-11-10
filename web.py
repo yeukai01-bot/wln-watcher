@@ -52,6 +52,9 @@ HELP = (
     "sent P1 P3 records that you sent those.\n"
     "leads shows today's radar list and what has been sent.\n"
     "remove name@example.com stops the radar ever drafting to that address again.\n"
+    "Follow-ups (weekdays, from your Gmail, as replies in the same thread: day 2, day 7, day 28): the list comes at 08:30, "
+    "they go at 10:30. hold F2 keeps one back today; fu stop F2 ends that series; fu preview F1 shows the email; "
+    "fu shows the status; fu check works out today's list now; fu pause / fu resume. A reply, bounce or remove stops them.\n"
     "review <CQC link> writes a free Report Review, email and video for any service, e.g. review https://www.cqc.org.uk/location/1-123456789\n\n"
     "Printed letters (Stannp, sent with the radar list each morning):\n"
     "letters shows the letters waiting, each with a link to the exact PDF.\n"
@@ -121,6 +124,14 @@ def _draft_in_background(aid: str) -> None:
 
 
 def handle_text(text: str) -> str:
+    try:
+        import followups
+
+        fu = followups.handle(text, store)
+    except ImportError:
+        fu = None
+    if fu is not None:
+        return fu
     import linkedin_sp
 
     li = linkedin_sp.handle(text, store)
@@ -803,6 +814,12 @@ def health():
         import expert_brief
 
         expert_brief.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # weekday radar follow-ups from Gmail: list at 08:30 UK, sends at 10:30
+        import followups
+
+        followups.check_in_background(store, telegram.send_message)
     except Exception:
         pass
     return "Well-Led Network reply service is running."
