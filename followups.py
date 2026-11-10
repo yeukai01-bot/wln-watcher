@@ -24,7 +24,7 @@ Telegram:
   hold F1 F3    keeps those off today's send (they come back tomorrow)
   fu stop F2    stops the series for that person for good (also: fu stop name@example.com)
   fu pause / fu resume   stops or restarts all follow-ups
-  fu older      one-off: lists older radar prospects (before the 45-day window) who never replied, for a single
+  fu older      one-off: lists older radar prospects (before the 60-day window) who never replied, for a single
                 "how is the action plan going?" email. Nothing is sent until "fu older go"; then 15 go each weekday
                 at 10:45 (each re-checked for a reply first). "fu older stop" pauses it.
 """
@@ -52,11 +52,12 @@ STATE = "wln:followups"
 BATCH = "wln:fu_batch"
 FLAGS = "wln:fu_flags"
 OLDER = "wln:fu_older"
+MANUAL = "wln:fu_manual"  # radar leads first emailed outside Gmail (e.g. sam.ai), added with "fu add"
 OLDER_PER_DAY = int(os.getenv("FOLLOWUP_OLDER_PER_DAY", "15"))
 ANNOUNCE_AT = (8, 30)
 SEND_AT = (10, 30)
 DAILY_CAP = int(os.getenv("FOLLOWUP_DAILY_CAP", "20"))
-LOOKBACK_DAYS = 45
+LOOKBACK_DAYS = 60  # longer than the last step (day 45), so every series can finish
 MIN_GAP_DAYS = 3
 FREE_MAIL = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk", "yahoo.com", "yahoo.co.uk",
              "live.com", "live.co.uk", "icloud.com", "me.com", "aol.com", "btinternet.com", "sky.com", "msn.com"}
@@ -143,6 +144,8 @@ def nice(d: date) -> str:
 def _hello(s: dict) -> str:
     words = [w for w in (s.get("name") or "").replace(".", "").split() if w.lower() not in ("mr", "mrs", "ms", "miss", "dr", "mx")]
     first = words[0].strip() if words else ""
+    if re.search(r"\b(team|manager|office|admin|enquiries|care home)\b", s.get("name") or "", re.I):
+        first = ""
     return f"Hi {first}," if first else f"Hello {s.get('service') or 'there'} team,"
 
 
@@ -318,6 +321,17 @@ def _gmail_prospect(e: str, g: dict) -> dict:
             "report_date": "", "review_url": "", "can_email": True, "_gmail": g}
 
 
+def outside_sent(store, m) -> dict:
+    """Radar first emails found outside the bot: Gmail Sent, plus leads added with "fu add" (sent from sam.ai)."""
+    out = gmail_radar_sent(m)
+    for e, g in _get(store, MANUAL, {}).items():
+        if e not in out:
+            out[e] = {"first_sent": g["first_sent"], "orig_msgid": "", "name": g.get("name", ""),
+                      "service": g.get("service", ""),
+                      "orig_subject": f"A free review of your CQC report, {g.get('service', '')}".strip(", ")}
+    return out
+
+
 def send_email(s: dict, body: str) -> str:
     msg = EmailMessage()
     msg["From"] = formataddr(("Yeukai Kajidori", ACCOUNT))
@@ -375,7 +389,7 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
     m = (imap_factory or _imap)()
     try:
         # radar emails sent outside the bot (Gmail by hand, sam.ai) are found in Gmail Sent too
-        for e, g in gmail_radar_sent(m).items():
+        for e, g in outside_sent(store, m).items():
             if e not in candidates and g["first_sent"] >= cutoff and e.split("@")[-1] not in FREE_MAIL:
                 candidates[e] = _gmail_prospect(e, g)
         for e, p in candidates.items():
@@ -397,6 +411,8 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
                 else:
                     rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
                     found = find_first_email(m, e, rd - timedelta(days=1))
+                    if not found and p.get("status") == "sent" and p.get("sent_at"):
+                        found = {"first_sent": int(p["sent_at"]), "orig_msgid": "", "orig_subject": p.get("subject", "")}
                 if not found:
                     continue  # the first email has not gone yet, so no follow-up
                 s.update(found)
@@ -420,7 +436,7 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
 # ------------------------------------------------------------------ one-off check-in for older prospects
 
 def older_candidates(store, imap_factory=None) -> list[str]:
-    """Radar prospects from before the 45-day window who were emailed, never replied and never had a follow-up."""
+    """Radar prospects from before the 60-day window who were emailed, never replied and never had a follow-up."""
     suppressed = set(e.lower() for e in store.suppressed())
     allst = states(store)
     cutoff = time.time() - LOOKBACK_DAYS * 86400
@@ -432,7 +448,7 @@ def older_candidates(store, imap_factory=None) -> list[str]:
     out = []
     m = (imap_factory or _imap)()
     try:
-        for e, g in gmail_radar_sent(m).items():
+        for e, g in outside_sent(store, m).items():
             if (e not in cands and g["first_sent"] < cutoff and e not in suppressed
                     and e.split("@")[-1] not in FREE_MAIL):
                 cands[e] = _gmail_prospect(e, g)
@@ -451,6 +467,8 @@ def older_candidates(store, imap_factory=None) -> list[str]:
                 else:
                     rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
                     found = find_first_email(m, e, rd - timedelta(days=1))
+                    if not found and p.get("status") == "sent" and p.get("sent_at"):
+                        found = {"first_sent": int(p["sent_at"]), "orig_msgid": "", "orig_subject": p.get("subject", "")}
                 if not found:
                     continue
                 if found["first_sent"] >= cutoff:
@@ -702,6 +720,22 @@ def handle(text: str, store) -> str | None:
                 telegram_io.send_message(f"Follow-up check failed: {type(exc).__name__}: {str(exc)[:200]}")
         threading.Thread(target=go, daemon=True).start()
         return "Checking Gmail for who is due a follow-up. It takes a minute; nothing will be sent."
+    if re.match(r"^(?:fu|followups?)\s+add\b", low):
+        added = _get(store, MANUAL, {})
+        n = 0
+        for line in t.splitlines()[1:] if "\n" in t else []:
+            parts = [x.strip() for x in line.split("|")]
+            if len(parts) < 4 or "@" not in parts[1]:
+                continue
+            try:
+                d = datetime.strptime(parts[0], "%Y-%m-%d").replace(hour=9, tzinfo=UK)
+            except ValueError:
+                continue
+            added[parts[1].lower()] = {"first_sent": int(d.timestamp()), "name": parts[2], "service": parts[3]}
+            n += 1
+        _set(store, MANUAL, added)
+        return (f"Added {n} radar leads sent outside Gmail ({len(added)} in total). They join the follow-ups "
+                "(fu check) or the older one-off list (fu older), whichever fits their date.")
     if re.match(r"^(?:fu|followups?)\s+older\s+go$", low):
         o = _get(store, OLDER, {})
         if not o.get("queue"):
