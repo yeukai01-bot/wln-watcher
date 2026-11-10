@@ -144,7 +144,7 @@ def nice(d: date) -> str:
 def _hello(s: dict) -> str:
     words = [w for w in (s.get("name") or "").replace(".", "").split() if w.lower() not in ("mr", "mrs", "ms", "miss", "dr", "mx")]
     first = words[0].strip() if words else ""
-    if re.search(r"\b(team|manager|office|admin|enquiries|care home)\b", s.get("name") or "", re.I):
+    if "@" in (s.get("name") or "") or re.search(r"\b(team|manager|office|admin|enquiries|care home)\b", s.get("name") or "", re.I):
         first = ""
     return f"Hi {first}," if first else f"Hello {s.get('service') or 'there'} team,"
 
