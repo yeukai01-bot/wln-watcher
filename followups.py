@@ -4,7 +4,8 @@ After a radar prospect has been sent the free Report Review, up to three short f
 replies in the same Gmail thread:
   day 2   did the review open, which of the three points matters most
   day 7   the two CQC clocks (action plan, rating review) and a free check of their draft
-  day 28  last note: making the changes stick, work with me
+  day 28  the plan should be with CQC: one habit that makes the evidence build itself
+  day 45  how is the action plan going? offer help to implement it (last note)
 
 Safety rules:
   * A follow-up only goes if the first email is really in the Gmail Sent folder (checked over IMAP).
@@ -61,9 +62,11 @@ WHATSAPP_PS = ("P.S. Want quick answers to your CQC questions? Join the Well-Led
                "care leaders. Managers post their questions and I answer them there: https://shor.by/wln-whatsapp")
 OPT_OUT = "If you'd rather not hear from me again, just reply 'remove' and I won't contact you."
 
-STEPS = [("fu1", 2), ("fu2", 7), ("fu3", 28)]
+STEPS = [("fu1", 2), ("fu2", 7), ("fu3", 28), ("fu4", 45)]
+NEXT = {"fu1": "fu2", "fu2": "fu3", "fu3": "fu4"}
+LAST = "fu4"
 STEP_NAMES = {"fu1": "day 2, which point matters most", "fu2": "day 7, the CQC dates + free draft check",
-              "fu3": "day 28, last note"}
+              "fu3": "day 28, one habit once the plan is in", "fu4": "day 45, how is the plan going (last note)"}
 
 _lock = threading.Lock()
 _bg = {"t": 0.0}
@@ -174,18 +177,27 @@ def build(step: str, s: dict, today: date) -> str | None:
                   "change has stuck.",
                   "If it would help, send me your draft before you submit and I'll send back written comments, free of charge."]
     elif step == "fu3":
-        parts += ["I won't keep filling your inbox, so this is my last note for now.",
-                  "By now your action plan is probably with CQC. The harder part comes next: making the changes stick, "
-                  "so that when CQC comes back, the evidence is there without a last-minute scramble. That's the work I "
-                  "do with providers like yours, built on the same habits that took a service I led from a local "
-                  "authority embargo back to green.",
+        parts += ["By now your action plan is probably with CQC. Well done for getting it in.",
+                  "One habit makes the next part much easier: every Friday, take ten minutes with each action owner, "
+                  "ask \"what changed this week, and where is the proof?\", and file that proof straight away against "
+                  "the action it belongs to. When CQC comes back, the evidence is already sitting there, instead of a "
+                  "last-minute scramble.",
+                  "If you'd like a hand setting that up for your team, just reply and we'll find 20 minutes."]
+    elif step == "fu4":
+        parts += ["I wanted to check in now your action plan has had a few weeks to bed in. How are you getting on with it?",
+                  "In my experience plans usually stall in one of three places: the same one or two people own every action, "
+                  "the work is happening but nobody is filing the evidence, or the wider team still doesn't know what has "
+                  "changed. If any of that sounds familiar, you're not alone, and it's very fixable.",
+                  "That's exactly the work I do with providers: helping them deliver the plan they've written, week by week, "
+                  "so that when CQC returns the improvement is clear to see. It's built on the same habits that took a "
+                  "service I led from a local authority embargo back to green.",
                   f"If you'd like to see how that could look for {s.get('service') or 'your service'}, everything is here: "
                   "https://shor.by/wln-work-with-me",
-                  "Or just reply \"yes\" and we'll find 20 minutes to talk it through.",
-                  "Either way, I wish you and the team well."]
+                  "Or just reply \"yes\" and we'll find 20 minutes to talk it through. This is my last note for now, "
+                  "and either way I wish you and the team well."]
     else:
         return None
-    if step != "fu3":
+    if step != LAST:
         parts.append(OPT_OUT)
     parts += [SIGNATURE, WHATSAPP_PS]
     return "\n\n".join(parts)
@@ -284,8 +296,8 @@ def next_step(s: dict, today: date) -> str | None:
             continue
         if age < day:
             return None
-        nxt = dict(STEPS).get({"fu1": "fu2", "fu2": "fu3"}.get(step, ""), 999)
-        if step != "fu3" and age >= nxt:
+        nxt = dict(STEPS).get(NEXT.get(step, ""), 999)
+        if step != LAST and age >= nxt:
             continue  # catching up: skip a step whose moment has passed and go to the next one
         if build(step, s, today) is None:
             continue
