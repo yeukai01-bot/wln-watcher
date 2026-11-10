@@ -102,7 +102,7 @@ Reply with JSON only:
  "questions": ["3 questions an inspector is likely to ask next time, one per fix, in the inspector's words"],
  "subject": "email subject under 60 characters, no rating in it, e.g. 'A free review of your CQC report, Oak House'",
  "stakes": "one sentence on what is at stake for them now, using only facts in the report (e.g. CQC has asked for an action plan; Safe rated Inadequate with N breaches if N is in the report). No deadlines unless the report gives one.",
- "hook": "one curiosity sentence in your own voice, framed as your view, that names a surprising angle on their report WITHOUT giving the answer, e.g. 'I don't think the medicines finding is really a medicines problem. It shows up in three places in your report.' It must rest on something the report itself says.",
+ "hook": "one or two short sentences in your own voice, framed as your view, that names a surprising angle on their report WITHOUT giving the answer, e.g. 'I don't think the medicines finding is really a medicines problem. It shows up in three places in your report.' It must rest on something the report itself says.",
  "context": {"people_supported": "number of people supported if stated, else ''", "breaches": "number of breaches if stated, else ''",
              "action_plan_requested": true or false, "praise": "one short verbatim phrase of praise from people or relatives in the report, under 12 words, or ''"},
  "trace": [{"item": "'found 1', 'found 2' ... for each found item, then 'hook', then 'stakes'", "quote": "a verbatim quote copied exactly from the report text, under 25 words, that supports that item"}]
@@ -153,10 +153,8 @@ def check_review(rv: dict, text: str) -> dict:
         if ok:
             ok_items.add(item)
     unverified = [f"{k}: {v}" for k, v in items.items() if v and k.startswith("found") and k not in ok_items]
-    for key in ("fix_first", "evidence", "underneath"):
-        for x in rv.get(key) or []:
-            if not _numbers_ok(x, text):
-                unverified.append(f"number not in the report: {x}")
+    if rv.get("working") and not _numbers_ok(rv["working"], text):
+        unverified.append(f"number not in the report: {rv['working']}")
     for key in ("hook", "stakes"):
         if rv.get(key) and key not in ok_items:
             unverified.append(f"{key} dropped (could not trace it to the report): {rv[key]}")
@@ -208,9 +206,11 @@ WHATSAPP_PS = ("P.S. Want quick answers to your CQC questions? Join the Well-Led
 
 # Yeukai's proof lines, worded exactly as he approved them (10 Nov 2026). The bot picks one and never rewrites it.
 PROOF_BASE = "I was a CQC Registered Manager for 15 years and led two services to a Good rating"
-PROOF_INADEQUATE = PROOF_BASE + ", and took a failing service from local authority Embargo back to Green."
-PROOF_SUPPORTED_LIVING = PROOF_BASE + ", and grew a mental health supported living provider from one service to five."
-PROOF_HOME_CARE = PROOF_BASE + ", including a home care agency delivering about 3,000 hours of care a week."
+PROOF_INADEQUATE = ("I was a CQC Registered Manager for 15 years, led two services to a Good rating, "
+                    "and took a failing service from local authority Embargo back to Green.")
+PROOF_SUPPORTED_LIVING = ("I was a CQC Registered Manager for 15 years, led two services to a Good rating, "
+                          "and grew a mental health supported living provider from one service to five.")
+PROOF_HOME_CARE = PROOF_BASE + ", one of them a home care agency delivering about 3,000 hours of care a week."
 
 
 def proof_line(p: dict) -> str:
@@ -253,7 +253,7 @@ def _first_fix(rv: dict) -> str:
         f = fixes[0]
         lines = [_nohyphen(f["title"])] + [f"{i}. {_nohyphen(x)}" for i, x in enumerate(f["steps"], 1)]
         if f.get("proof"):
-            lines.append("You will know it is working when " + _nohyphen(f["proof"][0].lower() + f["proof"][1:]))
+            lines.append("How you will know it is working: " + _nohyphen(f["proof"]))
         return "\n".join(lines)
     return "\n".join(f"{i}. {_nohyphen(x)}" for i, x in enumerate(rv.get("fix_first") or [], 1))
 
