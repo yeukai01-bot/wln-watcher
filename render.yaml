@@ -116,3 +116,23 @@ services:
     startCommand: python salesblink_alerts.py
     envVars:
       - fromGroup: wln-secrets
+
+  # Sends the weekday radar follow-ups from Gmail (10:30 UK) and the older check-ins (10:45 UK).
+  # Has to be a paid cron job: Render blocks outbound mail ports on free web services, which is
+  # why 19 of 20 follow-ups timed out from wln-replies on 10 Nov 2026. Runs every 15 minutes
+  # 09:00 to 12:59 UTC on weekdays (covers 10:30 UK in winter and summer), costs pennies a month.
+  - type: cron
+    name: wln-followups-send
+    runtime: python
+    plan: starter
+    schedule: "*/15 9-12 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python followups_send.py
+    envVars:
+      - fromGroup: wln-secrets
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: wln-watcher-memory
+          property: connectionString
+

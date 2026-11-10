@@ -505,12 +505,13 @@ def send_older(store, send, today: date, imap_factory=None, sender=None) -> str:
     m = (imap_factory or _imap)()
     try:
         for e in todo:
-            done.add(e)
             s = allst.get(e)
             if not s or s.get("stopped") or s.get("steps"):
+                done.add(e)
                 continue
             why = has_reply(m, e, s["first_sent"])
             if why:
+                done.add(e)
                 s["stopped"] = why
                 put_state(store, s)
                 skipped.append(f"{s.get('name') or e} ({why})")
@@ -518,8 +519,9 @@ def send_older(store, send, today: date, imap_factory=None, sender=None) -> str:
             try:
                 mid = sender(s, build("old", s, today))
             except Exception as exc:
-                skipped.append(f"{s.get('name') or e} (send failed: {type(exc).__name__})")
+                skipped.append(f"{s.get('name') or e} (send failed: {_why(exc)}, kept for next time)")
                 continue
+            done.add(e)
             s.setdefault("steps", {})["old"] = int(time.time())
             s["stopped"] = "older one-off check-in sent"
             s["refs"] = [x for x in (s.get("refs") or [s.get("orig_msgid")]) if x] + [mid]
@@ -569,8 +571,9 @@ def announce(store, send, today: date) -> str:
 
 def send_batch(store, send, today: date, imap_factory=None, sender=None) -> str:
     batch = _get(store, BATCH, {})
-    if batch.get("date") != today.isoformat() or batch.get("sent_done"):
+    if batch.get("date") != today.isoformat() or not _batch_pending(batch):
         return "nothing to send"
+    batch["tries"] = batch.get("tries", 0) + 1
     batch["sent_done"] = True
     _set(store, BATCH, batch)
     allst, sent, skipped = states(store), [], []
@@ -578,10 +581,12 @@ def send_batch(store, send, today: date, imap_factory=None, sender=None) -> str:
     m = (imap_factory or _imap)()
     try:
         for it in batch["items"]:
-            if it.get("held"):
+            if it.get("held") or it.get("sent"):
                 continue
             s = allst.get(it["email"])
             if not s or s.get("stopped") or it["step"] in s.get("steps", {}):
+                it["sent"] = it["step"] in (s or {}).get("steps", {})
+                it["done"] = True
                 continue
             why = has_reply(m, s["email"], s["first_sent"])  # last-minute check
             if why:
@@ -595,7 +600,7 @@ def send_batch(store, send, today: date, imap_factory=None, sender=None) -> str:
             try:
                 mid = sender(s, body)
             except Exception as exc:
-                skipped.append(f"{it['code']} (send failed: {type(exc).__name__})")
+                skipped.append(f"{it['code']} (send failed: {_why(exc)})")
                 continue
             s.setdefault("steps", {})[it["step"]] = int(time.time())
             s["refs"] = [x for x in (s.get("refs") or [s.get("orig_msgid")]) if x] + [mid]
@@ -609,13 +614,35 @@ def send_batch(store, send, today: date, imap_factory=None, sender=None) -> str:
         except Exception:
             pass
     _set(store, BATCH, batch)
+    retry = _batch_pending(batch)
     if sent or skipped:
-        send(("Radar follow-ups sent from Gmail:\n" + "\n".join(sent) if sent else "No radar follow-ups sent today.")
-             + ("\n\nNot sent: " + ", ".join(skipped) if skipped else ""))
+        send(("Radar follow-ups sent from Gmail:\n" + "\n".join(sent) if sent else "No radar follow-ups sent this time.")
+             + ("\n\nNot sent: " + ", ".join(skipped) if skipped else "")
+             + ("\n\nI will try the unsent ones again in about 15 minutes." if retry and skipped else "")
+             + ("\n\nStill unsent after 3 tries; they come back on tomorrow's list." if skipped and not retry else ""))
     return f"sent {len(sent)}"
 
 
-def tick(store, send, now: datetime | None = None) -> str:
+MAX_TRIES = 3
+
+
+def _batch_pending(batch: dict) -> bool:
+    """Items still to send today (not held, not sent, not finished), with tries left."""
+    if batch.get("tries", 0) >= MAX_TRIES:
+        return False
+    return any(not (i.get("held") or i.get("sent") or i.get("done")) for i in batch.get("items", []))
+
+
+def _why(exc: Exception) -> str:
+    name = type(exc).__name__
+    if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower():
+        return f"{name}, Gmail could not be reached"
+    return name
+
+
+def tick(store, send, now: datetime | None = None, can_send: bool = True) -> str:
+    """can_send=False on the free web service: Render blocks outbound mail ports (465/587) on free
+    web services, so sending happens in the paid cron job wln-followups-send (followups_send.py)."""
     now = now or datetime.now(UK)
     if not enabled() or flags(store).get("paused") or now.weekday() >= 5:
         return "off"
@@ -624,7 +651,9 @@ def tick(store, send, now: datetime | None = None) -> str:
     hm = (now.hour, now.minute)
     if hm >= ANNOUNCE_AT and batch.get("date") != today.isoformat():
         return announce(store, send, today)
-    if hm >= SEND_AT and batch.get("date") == today.isoformat() and not batch.get("sent_done"):
+    if not can_send:
+        return "announce only (sending runs in the cron job)"
+    if hm >= SEND_AT and batch.get("date") == today.isoformat() and _batch_pending(batch):
         return send_batch(store, send, today)
     older = _get(store, OLDER, {})
     if hm >= (SEND_AT[0], SEND_AT[1] + 15) and older.get("approved") and older.get("last_run") != today.isoformat():
@@ -632,7 +661,7 @@ def tick(store, send, now: datetime | None = None) -> str:
     return "waiting"
 
 
-def check_in_background(store, send, every_s: int = 540) -> None:
+def check_in_background(store, send, every_s: int = 540, can_send: bool = False) -> None:
     with _lock:
         if time.time() - _bg["t"] < every_s:
             return
@@ -640,7 +669,7 @@ def check_in_background(store, send, every_s: int = 540) -> None:
 
     def go():
         try:
-            print("[radar follow-ups]", tick(store, send))
+            print("[radar follow-ups]", tick(store, send, can_send=can_send))
         except Exception as exc:
             print("radar follow-ups failed:", type(exc).__name__, exc)
             try:
