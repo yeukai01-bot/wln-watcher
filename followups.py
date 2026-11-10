@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import email
 import email.header
+import email.utils
 import imaplib
 import json
 import os
@@ -282,6 +283,41 @@ def has_reply(m, addr: str, since_ts: int) -> str | None:
     return None
 
 
+RADAR_PHRASE = "short, free review"  # in every radar first email, whichever tool sent it (bot, Gmail, sam.ai)
+OWN = {"kajidoricollective@gmail.com", "yeukai01@gmail.com", "yeukaibusinessshow@gmail.com", "yeukai1@hotmail.co.uk"}
+
+
+def gmail_radar_sent(m, since: str = "2026/09/01", limit: int = 600) -> dict:
+    """Every radar first email in Gmail Sent, by recipient: earliest date, Message-ID, subject, name and service."""
+    out = {}
+    for n in _search(m, f'in:sent "{RADAR_PHRASE}" after:{since}')[-limit:]:
+        h = _headers(m, n)
+        try:
+            when = parsedate_to_datetime(h.get("Date"))
+        except Exception:
+            continue
+        name, addr = email.utils.parseaddr(h.get("To") or "")
+        addr = addr.strip().lower()
+        if not addr or addr in OWN or "," in (h.get("To") or ""):
+            continue
+        subj = str(email.header.make_header(email.header.decode_header(h.get("Subject") or "")))
+        if re.match(r"^re:", subj, re.I):
+            continue
+        prev = out.get(addr)
+        if prev and prev["first_sent"] <= int(when.timestamp()):
+            continue
+        service = subj.rsplit(",", 1)[1].strip() if "," in subj else ""
+        out[addr] = {"first_sent": int(when.timestamp()), "orig_msgid": (h.get("Message-ID") or "").strip(),
+                     "orig_subject": subj, "name": str(email.header.make_header(email.header.decode_header(name))) if name else "",
+                     "service": service}
+    return out
+
+
+def _gmail_prospect(e: str, g: dict) -> dict:
+    return {"email": e, "registered_manager": g.get("name", ""), "location_name": g.get("service", ""),
+            "report_date": "", "review_url": "", "can_email": True, "_gmail": g}
+
+
 def send_email(s: dict, body: str) -> str:
     msg = EmailMessage()
     msg["From"] = formataddr(("Yeukai Kajidori", ACCOUNT))
@@ -338,10 +374,16 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
     due = []
     m = (imap_factory or _imap)()
     try:
+        # radar emails sent outside the bot (Gmail by hand, sam.ai) are found in Gmail Sent too
+        for e, g in gmail_radar_sent(m).items():
+            if e not in candidates and g["first_sent"] >= cutoff and e.split("@")[-1] not in FREE_MAIL:
+                candidates[e] = _gmail_prospect(e, g)
         for e, p in candidates.items():
             s = allst.get(e) or {"email": e, "steps": {}}
-            s.update({"name": p.get("registered_manager") or s.get("name", ""), "service": p.get("location_name", ""),
-                      "report_date": p.get("report_date", ""), "review_url": p.get("review_url", ""),
+            s.update({"name": p.get("registered_manager") or s.get("name", ""),
+                      "service": p.get("location_name") or s.get("service", ""),
+                      "report_date": p.get("report_date") or s.get("report_date", ""),
+                      "review_url": p.get("review_url") or s.get("review_url", ""),
                       "code": p.get("code", ""), "prospect_id": p.get("id")})
             if s.get("stopped"):
                 continue
@@ -350,8 +392,11 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
                 put_state(store, s)
                 continue
             if not s.get("first_sent"):
-                rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
-                found = find_first_email(m, e, rd - timedelta(days=1))
+                if p.get("_gmail"):
+                    found = {k: p["_gmail"][k] for k in ("first_sent", "orig_msgid", "orig_subject")}
+                else:
+                    rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
+                    found = find_first_email(m, e, rd - timedelta(days=1))
                 if not found:
                     continue  # the first email has not gone yet, so no follow-up
                 s.update(found)
@@ -387,18 +432,29 @@ def older_candidates(store, imap_factory=None) -> list[str]:
     out = []
     m = (imap_factory or _imap)()
     try:
+        for e, g in gmail_radar_sent(m).items():
+            if (e not in cands and g["first_sent"] < cutoff and e not in suppressed
+                    and e.split("@")[-1] not in FREE_MAIL):
+                cands[e] = _gmail_prospect(e, g)
         for e, p in cands.items():
             s = allst.get(e) or {"email": e, "steps": {}}
             if s.get("stopped") or s.get("steps"):
                 continue
-            s.update({"name": p.get("registered_manager") or s.get("name", ""), "service": p.get("location_name", ""),
-                      "report_date": p.get("report_date", ""), "review_url": p.get("review_url", ""),
+            s.update({"name": p.get("registered_manager") or s.get("name", ""),
+                      "service": p.get("location_name") or s.get("service", ""),
+                      "report_date": p.get("report_date") or s.get("report_date", ""),
+                      "review_url": p.get("review_url") or s.get("review_url", ""),
                       "code": p.get("code", ""), "prospect_id": p.get("id")})
             if not s.get("first_sent"):
-                rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
-                found = find_first_email(m, e, rd - timedelta(days=1))
+                if p.get("_gmail"):
+                    found = {k: p["_gmail"][k] for k in ("first_sent", "orig_msgid", "orig_subject")}
+                else:
+                    rd = parse_report_date(p.get("report_date", "")) or datetime.fromtimestamp(p.get("created", time.time()), UK).date()
+                    found = find_first_email(m, e, rd - timedelta(days=1))
                 if not found:
                     continue
+                if found["first_sent"] >= cutoff:
+                    continue  # recent enough for the normal series
                 s.update(found)
             why = has_reply(m, e, s["first_sent"])
             if why:
