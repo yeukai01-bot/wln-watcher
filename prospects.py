@@ -618,6 +618,20 @@ def run(store, telegram) -> None:
         print("linkedin radar step failed:", exc)
 
 
+def _extras(p: dict) -> str:
+    """WhatsApp draft (when the published number is a mobile) and the trace of each claim, for Yeukai to check."""
+    import review
+
+    rv = p.get("review") or {}
+    if not rv or not p.get("review_url"):
+        return ""
+    out = ""
+    if review.is_mobile(p.get("phone", "")):
+        out += (f"\n\nWhatsApp draft for {p.get('phone')} (send after 9am):\n\n"
+                + review.whatsapp_text(p, rv, p["review_url"]))
+    return out + "\n\n" + review.trace_note(rv)
+
+
 def prospect_message(p: dict) -> str:
     check = {"safe": "checked, safe to send", "risky": "checked, valid but cannot be fully confirmed", "unchecked": "not checked"}.get(p.get("email_check", ""), "")
     if p.get("sb_queued_at"):
@@ -628,6 +642,7 @@ def prospect_message(p: dict) -> str:
             f"Queued for the SalesBlink sequence (joins {p.get('sb_due', 'in 3 days')}): {p['email']} ({check}). Nothing to send by hand.\n"
             f"CQC page: {p['cqc_page']}\n"
             + (f"Review: {p['review_url']}\n" if p.get("review_url") else "")
+            + _extras(p)
         )
     how =f"Email to: {p['email']} ({p.get('email_source', '')}{', ' + check if check else ''})" if p["can_email"] else (
         "Call or write (no company number, email not allowed without consent)" if p["email"] else "Call or write (no email published)")
@@ -642,6 +657,7 @@ def prospect_message(p: dict) -> str:
         + (f"Open email: {REPLIES_URL}/m/{p['id']}\n" if p["can_email"] else "")
         + "\n"
         f"Subject: {p['subject']}\n\n{p['body']}"
+        + _extras(p)
     )
 
 

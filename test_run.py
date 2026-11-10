@@ -280,6 +280,23 @@ assert "\u2014" not in rv["found"][0] and rv["video_finding"] and rv["from_repor
 body = review.email_body(pr, rv, "https://x/r/abc/t", "https://sendspark.com/v/1")
 assert body.startswith("Dear Ann,") and "one minute video" in body and "shor.by/enrolment-call" in body and "reply 'remove'" in body
 assert "Kind regards\nYeukai Kajidori" in body and " - " not in body and "\u2014" not in body
+# 10 Nov 2026: every claim traced to the report; untraceable hook/stakes dropped; numbers not in the report flagged
+_ai._ask = lambda system, user, max_tokens=0: ('{"found":["(Safe) Medicines records were not always accurate."],'
+    '"underneath":["Audits check forms, not practice"],"fix_first":["Rebuild the medicines audit"],"evidence":["x"],'
+    '"fixes":[{"title":"Rebuild the medicines audit","why":"w","steps":["Pick five MAR charts on Monday","Check them against stock","Discuss gaps in Friday huddle"],"proof":"Gaps fall week on week."}],'
+    '"stakes":"CQC has asked for an action plan within 28 days.","hook":"I do not think the medicines finding is really about medicines.",'
+    '"trace":[{"item":"found 1","quote":"Medicines records were not always accurate"},{"item":"hook","quote":"Audits did not identify the issues we found"},'
+    '{"item":"stakes","quote":"we made up this quote"}]}')
+rv2 = review.write_review(pr, txt)
+assert rv2["hook"] and not rv2["stakes"], rv2
+assert any("stakes dropped" in u for u in rv2["unverified"]), rv2["unverified"]
+b2 = review.email_body(pr, rv2, "https://x/r/abc/t")
+assert "short, free review" in b2 and "Pick five MAR charts on Monday" in b2 and "28 days" not in b2 and 'reply "call"' in b2, b2
+assert review.PROOF_BASE in b2
+wa = review.whatsapp_text({**pr, "phone": "07700 900123"}, rv2, "https://x/r/abc/t")
+assert wa.startswith("Hello Ann,") and "I do not think the medicines finding" in wa and "https://x/r/abc/t" in wa, wa
+assert review.is_mobile("07700 900123") and review.is_mobile("+44 7700 900123") and not review.is_mobile("01457 854599")
+assert "Could not trace" in review.trace_note(rv2) and "NOT VERIFIED" in review.trace_note(review.write_review(pr, ""))
 pr["review"] = rv
 web.store.put_prospect(dict(pr))
 assert c.get(f"/r/abc/{review.token('abc')}").status_code == 200
