@@ -321,9 +321,60 @@ def _gmail_prospect(e: str, g: dict) -> dict:
             "report_date": "", "review_url": "", "can_email": True, "_gmail": g}
 
 
+SAM_RADAR_FOLDER = os.getenv("SAM_RADAR_FOLDER", "3008")   # sam.ai lead folder "CQC Report Radar"
+SAM_EMAILED_STAGE = os.getenv("SAM_EMAILED_STAGE", "1683")  # sam.ai stage "Emailed"
+
+
+def sam_radar_emailed() -> dict:
+    """Radar leads emailed from sam.ai (which does not put its sends in Gmail Sent), read live with
+    SAM_API_TOKEN: every lead in the CQC Report Radar folder at stage Emailed. The lead's creation date
+    stands in for the first email (radar leads are emailed the day they are added). Empty if no token."""
+    token = os.getenv("SAM_API_TOKEN", "").strip()
+    if not token:
+        return {}
+    import requests
+
+    out, page = {}, 1
+    try:
+        while page <= 20:
+            r = requests.get("https://go.sam.ai/api/v1/crm/leads", params={"page": page, "per_page": 100}, timeout=40,
+                             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+            r.raise_for_status()
+            j = r.json()
+            data = j.get("data", j)
+            rows = data.get("data", data) if isinstance(data, dict) else data
+            if not rows:
+                break
+            for L in rows:
+                e = (L.get("email") or "").strip().lower()
+                if (not e or str(L.get("folder_id")) != SAM_RADAR_FOLDER
+                        or str(L.get("stage_id") or (L.get("stage") or {}).get("id")) != SAM_EMAILED_STAGE):
+                    continue
+                try:
+                    ts = int(datetime.fromisoformat(str(L.get("created_at")).replace("Z", "+00:00")).timestamp())
+                except Exception:
+                    continue
+                service = re.sub(r"\s*\(.*\)$", "", L.get("company_name") or "")
+                out[e] = {"first_sent": ts, "orig_msgid": "", "name": L.get("full_name") or L.get("first_name") or "",
+                          "service": service, "source": "sam.ai",
+                          "orig_subject": f"A free review of your CQC report, {service}".strip(", ")}
+            last = (data.get("last_page") if isinstance(data, dict) else None) or j.get("last_page")
+            if last and page >= int(last):
+                break
+            if len(rows) < 100:
+                break
+            page += 1
+    except Exception as exc:
+        print("sam.ai radar leads not read:", type(exc).__name__, exc)
+    return out
+
+
 def outside_sent(store, m) -> dict:
-    """Radar first emails found outside the bot: Gmail Sent, plus leads added with "fu add" (sent from sam.ai)."""
+    """Radar first emails found outside the bot: Gmail Sent, sam.ai Emailed radar leads, and "fu add" leads."""
     out = gmail_radar_sent(m)
+    for e, g in sam_radar_emailed().items():
+        if e not in out:
+            out[e] = g
     for e, g in _get(store, MANUAL, {}).items():
         if e not in out:
             out[e] = {"first_sent": g["first_sent"], "orig_msgid": "", "name": g.get("name", ""),
@@ -382,7 +433,7 @@ def plan(store, today: date | None = None, imap_factory=None) -> list[dict]:
     candidates = {}
     for p in store.prospects():
         e = (p.get("email") or "").strip().lower()
-        if not e or not p.get("can_email") or p.get("created", 0) < cutoff:
+        if not e or not p.get("can_email") or p.get("created", 0) < cutoff or p.get("on_request"):
             continue
         candidates.setdefault(e, p)
     due = []
@@ -443,7 +494,7 @@ def older_candidates(store, imap_factory=None) -> list[str]:
     cands = {}
     for p in store.prospects():
         e = (p.get("email") or "").strip().lower()
-        if e and p.get("can_email") and p.get("created", 0) < cutoff and e not in suppressed:
+        if e and p.get("can_email") and p.get("created", 0) < cutoff and e not in suppressed and not p.get("on_request"):
             cands.setdefault(e, p)
     out = []
     m = (imap_factory or _imap)()

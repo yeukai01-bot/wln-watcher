@@ -133,12 +133,15 @@ def run() -> int:
             f"DRAFT for review: {p['headline']}\n"
             f"Fact check: {check.get('supported', '?')} claims supported, {check.get('unsupported', '?')} removed or marked [CHECK].\n"
             + (f"Flags: {'; '.join(f for f in check.get('controversy_flags', []) if f)}\n" if any(check.get('controversy_flags', [])) else "")
+            + (f"HELD: {ai.needs_hold(check)}. Replying with its number will not queue it; ask Claude to check the source and rewrite it first, or reply 'approve anyway {p.get('number', '')}'.\n" if ai.needs_hold(check) else "")
             + "Nothing is published until you say yes."
         )
         telegram.send_document(f"{now:%Y-%m-%d}-{slugify(p['headline'])}.md", final, caption)
         for t in latest["topics"]:
             if t["headline"] == p["headline"]:
                 t["draft"] = final
+                t["fact_check"] = {k: check.get(k) for k in ("supported", "unsupported", "controversy_flags")}
+                t["hold"] = ai.needs_hold(check)
         seen.save_latest(latest)
 
     if not DRY_RUN:

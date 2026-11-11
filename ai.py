@@ -174,6 +174,25 @@ def fact_check(draft_md: str, source_text: str) -> dict:
     return summary
 
 
+HOLD_UNSUPPORTED = int(os.getenv("DRAFT_HOLD_UNSUPPORTED", "2"))
+
+
+def needs_hold(check: dict | None) -> str:
+    """Why a draft must not go to the publishing queue as it stands, or ''.
+    A draft whose own fact check removed or marked more than a couple of claims usually rests on a
+    premise the source does not support (11 Nov 2026: UKHSA communal accommodation guidance drafted as
+    applying to supported living; it excludes adult social care)."""
+    if not check:
+        return ""
+    try:
+        n = int(check.get("unsupported") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > HOLD_UNSUPPORTED:
+        return f"its fact check removed or marked {n} claims, so the angle itself may not stand up"
+    return ""
+
+
 def draft_and_check(topic: dict) -> tuple[str | None, dict | None, str]:
     """Research the source page, draft, fact-check. Returns (markdown, check, problem)."""
     import sources

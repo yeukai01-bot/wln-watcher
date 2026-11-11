@@ -141,7 +141,7 @@ def waiting(store) -> list[dict]:
             continue
         if p.get("email") and p["email"] in suppressed:
             continue
-        if not p.get("review"):
+        if not p.get("review") or p.get("on_request"):
             continue
         out.append(p)
     return out

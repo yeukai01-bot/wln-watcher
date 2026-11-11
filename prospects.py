@@ -675,6 +675,8 @@ def review_one(lid: str, store, telegram) -> None:
     p["rating"] = p["rating"] or detail.get("overall") or "not rated"
     p = prepare(p, 0, store, set(store.suppressed()), {"tried": 0, "found": 0, "no_name_or_site": 0})
     p["code"] = "R-" + p["id"][:4]
+    p["on_request"] = True  # a look-up, not a radar lead: never posted, queued or followed up automatically
+    p.pop("sb_queued_at", None)
     if p.get("video_queued"):
         import review
 

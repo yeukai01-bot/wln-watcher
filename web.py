@@ -108,13 +108,17 @@ def _draft_in_background(aid: str) -> None:
     if md:
         a["draft"] = md
         a["fact_check"] = {k: check.get(k) for k in ("supported", "unsupported", "controversy_flags")} if check else None
+        hold = ai.needs_hold(check)
+        if hold:
+            a["status"] = "held"  # out of the publishing queue until checked
+            a["problem"] = hold
         store.put_approval(a)
         flags = [f for f in (check or {}).get("controversy_flags", []) if f]
         telegram.send_document(
             f"{a['date']}-{a['number']}.md", md,
             f"Draft ready for approved topic {a['number']}: {a['headline']}\n"
             + (f"Flags: {'; '.join(flags)}\n" if flags else "")
-            + "Reply cancel " + str(a["number"]) + " if you want to stop it.",
+            + (f"HELD, not queued for publishing: {hold}. Check the source and rewrite before it goes anywhere.\n" if hold else "Reply cancel " + str(a["number"]) + " if you want to stop it."),
         )
     else:
         a["problem"] = problem
@@ -238,8 +242,9 @@ def handle_text(text: str) -> str:
                 store.put_approval(a)
                 return f"Cancelled topic {n}: {a['headline']}. It will not be published."
         return f"I could not find an approved, unpublished topic {n} from the latest list."
+    anyway = re.fullmatch(r"approve anyway\s+([\d\s,]+)", t)
     nums = [int(x) for x in re.findall(r"\d+", t)]
-    if nums and re.fullmatch(r"[\d\s,and&+.]+", t):
+    if nums and (anyway or re.fullmatch(r"[\d\s,and&+.]+", t)):
         if not latest or not latest.get("topics"):
             return "There is no morning list to approve from yet."
         by_num = {x["number"]: x for x in latest["topics"]}
@@ -253,11 +258,18 @@ def handle_text(text: str) -> str:
             if (latest["date"], n) in already:
                 done.append(f"{n} (already approved)")
                 continue
+            if topic.get("hold") and not anyway:
+                missing.append(f"{n} (HELD: {topic['hold']}. Not queued. Reply 'approve anyway {n}' only once the draft has been checked and rewritten)")
+                continue
             a = store.put_approval({**topic, "date": latest["date"], "status": "approved", "approved_at": int(time.time())})
             done.append(f"{n}: {topic['headline']}")
             if not topic.get("draft"):
                 threading.Thread(target=_draft_in_background, args=(a["id"],), daemon=True).start()
         msg = ""
+        held = [m for m in missing if "HELD" in m]
+        missing = [m for m in missing if "HELD" not in m]
+        if held:
+            msg += "\n".join(held) + "\n\n"
         if done:
             msg += "Approved for publishing:\n" + "\n".join(done) + "\n\nThey will go live at the next publishing run and I will send you the links."
         if missing:

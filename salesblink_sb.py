@@ -157,7 +157,7 @@ def flush_due(store) -> str:
     suppressed = set(store.suppressed())
     cutoff = time.time() - DELAY_DAYS * 86400 + 3600  # an hour's grace so the morning run never slips a day
     due = [p for p in store.prospects()
-           if p.get("sb_queued_at") and not p.get("salesblink") and p["sb_queued_at"] <= cutoff]
+           if p.get("sb_queued_at") and not p.get("salesblink") and not p.get("on_request") and p["sb_queued_at"] <= cutoff]
     due = [p for p in due if (p.get("email") or "").lower() not in suppressed]
     if not due:
         return ""
