@@ -683,6 +683,30 @@ def selfcheck_score():
     return (jsonify(result), 200, cors)
 
 
+@app.route("/tt/scorecard", methods=["GET", "POST", "OPTIONS"])
+def tt_scorecard():
+    """Free practice lesson: the in-page scorecard (GET) and 'Email this report' (POST). See scorecard.py."""
+    import scorecard
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type",
+            "Vary": "Origin", "Cache-Control": "no-store"}
+    if request.method == "OPTIONS":
+        return ("", 204, cors)
+    if request.method == "GET":
+        result, code = scorecard.get(request.args.get("session_id", ""), request.args.get("email", ""))
+        return (jsonify(result), code, cors)
+    payload = request.get_json(silent=True, force=True) or request.form.to_dict() or {}
+    try:
+        result, code = scorecard.email(store, str(payload.get("session_id", "")), str(payload.get("email", "")),
+                                       str(payload.get("name", ""))[:80])
+    except Exception as exc:
+        telegram.send_message(f"Scorecard email failed ({type(exc).__name__}).")
+        result, code = {"ok": False, "status": "unavailable"}, 200
+    return (jsonify(result), code, cors)
+
+
 @app.route("/wln/members/<token>", methods=["POST", "OPTIONS"])
 def wln_members(token: str):
     """Well-Led Network webhooks (New signup, Member removed, Account suspended) and the one-off member
