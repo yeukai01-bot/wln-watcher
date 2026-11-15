@@ -51,8 +51,31 @@ def _strings(obj):
             yield from _strings(v)
 
 
+SECTIONS = [("overall_score", "Overview"), ("strengths", "What went well"), ("weaknesses", "What could be improved")]
+SKIP_KEYS = {"final_score", "score", "scores", "percentage", "status", "model", "version", "created_at", "updated_at"}
+
+
 def _find_debrief(s: dict) -> str:
-    """The written debrief Tough Tongue produced (the same text as the 'Analysis Report' email)."""
+    """The written debrief Tough Tongue produced (the same text as the 'Analysis Report' email).
+
+    Tough Tongue keeps it in evaluation_results as separate markdown fields (overall_score, strengths,
+    weaknesses, then the detailed feedback). Older or other shapes: fall back to one long text block."""
+    ev = s.get("evaluation_results") or {}
+    if isinstance(ev, dict) and any(isinstance(ev.get(k), str) and ev.get(k).strip() for k, _ in SECTIONS):
+        parts = []
+        for k, title in SECTIONS:
+            v = ev.get(k)
+            if isinstance(v, str) and v.strip():
+                parts.append(f"### {title}\n{v.strip()}")
+        for k, v in ev.items():
+            if k in dict(SECTIONS) or k in SKIP_KEYS or not isinstance(v, str) or len(v.strip()) < 40:
+                continue
+            title = "Detailed Feedback" if "detail" in k or "feedback" in k else k.replace("_", " ").capitalize()
+            body = v.strip()
+            if title == "Detailed Feedback" or not body.lstrip().startswith(("#", "<h3")):
+                body = f"### {title}\n{body}"
+            parts.append(body)
+        return "\n\n".join(parts)
     best = ""
     for t in _strings(s):
         if ("Overview" in t or "Detailed Feedback" in t) and ("What went well" in t or "Detailed Feedback" in t):
@@ -163,6 +186,13 @@ def get(sid: str, email: str) -> tuple[dict, int]:
         minutes = round(float(dur) / 60) if dur and float(dur) > 90 else (int(dur) if dur else None)
     except (TypeError, ValueError):
         minutes = None
+    if not minutes:
+        try:
+            a = datetime.fromisoformat(str(s.get("created_at")).replace("Z", "+00:00"))
+            b = datetime.fromisoformat(str(s.get("completed_at")).replace("Z", "+00:00"))
+            minutes = max(1, round((b - a).total_seconds() / 60))
+        except (TypeError, ValueError):
+            minutes = None
     m = re.search(r"<strong>([^<]{3,120})</strong>", body)
     when = _when(s)
     return {
