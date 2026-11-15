@@ -22,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 FIT_PERSON_TASTER = "6ac76618dffaab401d2369ab"
+FIT_PERSON_FULL = "6ac7671d8a363fb6f5a1c4f8"   # paid 45-minute mock (Essentials, Plus, VIP)
+ALLOWED_SCENARIOS = {FIT_PERSON_TASTER, FIT_PERSON_FULL}
 SESSION_ID = re.compile(r"^[A-Za-z0-9_\-]{8,64}$")
 EMAIL = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}$")
 MAX_AGE_DAYS = 7
@@ -158,7 +160,7 @@ def _check(sid: str, email: str):
     except Exception:
         return None, "unavailable"
     s = s.get("data", s) if isinstance(s, dict) else {}
-    if str(s.get("scenario_id") or (s.get("scenario") or {}).get("id") or "") != FIT_PERSON_TASTER:
+    if str(s.get("scenario_id") or (s.get("scenario") or {}).get("id") or "") not in ALLOWED_SCENARIOS:
         return None, "not_found"
     owner = (s.get("user_email") or (s.get("user") or {}).get("email") or "").strip().lower()
     if not owner or owner != email.strip().lower():
@@ -202,7 +204,8 @@ def get(sid: str, email: str) -> tuple[dict, int]:
             "headline": m.group(1).strip() if m else "",
             "minutes": minutes,
             "completed": when.strftime("%-d %b %Y, %H:%M") if when else "",
-            "questions": 5,
+            "questions": 5 if str(s.get("scenario_id")) == FIT_PERSON_TASTER else None,
+            "full": str(s.get("scenario_id")) == FIT_PERSON_FULL,
         },
     }, 200
 
@@ -216,7 +219,7 @@ def _email_html(name: str, body: str, stats: dict) -> str:
 <div style="font-size:21px;font-weight:bold;margin-top:4px">Your CQC fit person practice scorecard</div>
 <div style="font-size:13px;color:#dfe6ef;margin-top:4px">{html.escape(stats.get('completed') or '')}</div></div>
 <div style="border:1px solid #e3e7ee;border-top:0;padding:20px 22px;border-radius:0 0 10px 10px;line-height:1.55;font-size:15px">
-<p>Hi {html.escape(name or 'there')},</p><p>Here is the scorecard from your free 10-minute practice, as promised.</p>
+<p>Hi {html.escape(name or 'there')},</p><p>Here is the report from your practice interview, as promised.</p>
 {body}
 <p style="margin-top:18px"><a href="{WHATSAPP}" style="color:#1f3a5f;font-weight:bold">Message Yeukai your score on WhatsApp</a> for one personal tip on your weakest area.</p>
 <div style="margin-top:20px;padding:18px;background:#f6f1e6;border-radius:10px">
@@ -249,7 +252,7 @@ def email(store, sid: str, addr: str, name: str = "") -> tuple[dict, int]:
     r = briefing._brevo("POST", "/smtp/email", {
         "sender": briefing.SENDER, "replyTo": {"email": briefing.REPLY_TO},
         "to": [{"email": addr, "name": name or addr}],
-        "subject": "Your CQC fit person practice scorecard",
+        "subject": ("Your CQC fit person interview report" if res["stats"].get("full") else "Your CQC fit person practice scorecard"),
         "htmlContent": _email_html(name, res["html"], res["stats"]),
         "tags": ["cqc-ir-scorecard"],
     })
