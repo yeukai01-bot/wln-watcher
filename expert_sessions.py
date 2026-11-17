@@ -157,6 +157,19 @@ def _date_of(app: dict, *keys: str) -> datetime | None:
     return None
 
 
+def _aware(v) -> datetime | None:
+    """Parse a date from Clustdoc or Redis and always return it timezone-aware (UTC if none given).
+    17 Nov 2026: a submitted_at with no timezone was compared with an aware 'now' and every check
+    failed with "can't subtract offset-naive and offset-aware datetimes"."""
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v).strip().replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 def _submitted() -> list[dict]:
     """Submitted Expert Session applications.
 
@@ -425,10 +438,7 @@ def check(store, send, force: bool = False) -> str:
             if store.r and (store.r.hexists(DONE, aid) or store.r.hexists(HELD, aid)):
                 continue
             sub = app.get("submitted_at") or app.get("updated_at")
-            try:
-                sub_dt = datetime.fromisoformat(str(sub).replace("Z", "+00:00"))
-            except Exception:
-                sub_dt = now
+            sub_dt = _aware(sub) or now
             if now - sub_dt < timedelta(hours=WAIT_HOURS):
                 continue
             items = _items(app["id"])
@@ -483,10 +493,9 @@ Or simply reply with a Thursday that works for you and I'll book it for you myse
 def _approved_at(store, aid: str, done_val: str) -> datetime | None:
     v = store.r.hget(APPROVED_AT, aid)
     if v:
-        try:
-            return datetime.fromisoformat(v)
-        except Exception:
-            pass
+        d = _aware(v)
+        if d:
+            return d
     m = re.match(r"approved (\d{1,2} \w{3} \d{1,2}:\d{2})", done_val or "")
     if not m:
         return None
