@@ -325,7 +325,7 @@ def check(store, send, force: bool = False) -> str:
             if uid in current:
                 continue
             try:
-                future = datetime.fromisoformat(b["start"]) > now
+                future = es._aware(b["start"]) > now
             except Exception:
                 future = False
             if future and not b.get("skip"):
