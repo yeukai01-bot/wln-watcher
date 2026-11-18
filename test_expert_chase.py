@@ -43,7 +43,7 @@ st.r.hset(es.DONE, "103", "declined 1 Nov 10:00")
 # day 4: Kevin gets nudge 1 (parsed from the old DONE text), Ann (1 day) nothing, declined ignored
 out = es.chase(st, send, force=True)
 assert out == ["chase1 101"], out
-assert emails == [("ceo@oaklandcare.co.uk", "Your Expert Session: pick your Thursday")], emails
+assert emails == [("ceo@oaklandcare.co.uk", "Your Expert Session: pick your slot")], emails
 assert "guest stop 101" in msgs[-1]
 # same run again: nothing more
 assert es.chase(st, send, force=True) == []

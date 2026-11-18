@@ -54,7 +54,7 @@ BOOKING_TEXT = f"""Congratulations, your application has been approved.
 
 Your Expert Session is a relaxed 45-minute recorded conversation with Yeukai Kajidori, shared with registered managers and care leaders across the UK on the Well-Led Network.
 
-Sessions are recorded on Thursdays between 4pm and 5pm (UK time), one guest per week, first come first served. Choose the option that suits you and pick your Thursday:
+Sessions are recorded on Wednesdays at 5pm and on Thursdays at 9am or 5pm (UK time), one guest per slot, first come first served. Choose the option that suits you and pick your slot:
 
 Option 1, free:
 {FREE_URL}
@@ -63,9 +63,9 @@ Option 2, Gift a Home (a charitable gift, amount shown on the booking page):
 {GIFT_URL}
 Everything in the free session, and 100% of your gift goes to Edge Housing, an Oxford charity giving homes to people who are homeless. In health and social care we spend our working lives supporting people at their most vulnerable; this is a simple way to carry that care beyond our own services. Contributing guests also receive a promotion pack, the edited recording, a written feature linking to your organisation and, where there's a genuine fit, a warm introduction.
 
-Both options give you the same session and the same welcome. Book as soon as you can, as Thursdays go quickly.
+Both options give you the same session and the same welcome. Book as soon as you can, as slots go quickly.
 
-The booking page shows Thursdays up to 90 days ahead. If none of those suits you, or they are all taken, just reply to this email with "waiting list". You'll be added straight away and emailed the moment a Thursday frees up, first come, first served.
+The booking page shows slots up to 90 days ahead. If none of those suits you, or they are all taken, just reply to this email with "waiting list". You'll be added straight away and emailed the moment a slot frees up, first come, first served.
 
 HOW YOUR SESSION WILL RUN (45 minutes)
 
@@ -467,27 +467,27 @@ def check(store, send, force: bool = False) -> str:
 
 
 # ---------------------------------------------------------------- approved but not booked
-NUDGE_1 = """Just a friendly follow-up: your Well-Led Network Expert Session is approved and your place is ready. It only needs a Thursday.
+NUDGE_1 = """Just a friendly follow-up: your Well-Led Network Expert Session is approved and your place is ready. It only needs a date.
 
-Book the free session here (pick any Thursday that suits, 4pm UK time):
+Book the free session here (Wednesdays at 5pm, or Thursdays at 9am or 5pm, UK time):
 {free}
 
 Or the Gift a Home option, where 100% of your gift goes to Edge Housing:
 {gift}
 
-It takes about two minutes. If none of the Thursdays suit you, just reply "waiting list" and I'll offer you the next one that frees up. If something has come up and now isn't the right time, reply "later" and I'll check back in a few months. No pressure either way."""
+It takes about two minutes. If none of the slots suit you, just reply "waiting list" and I'll offer you the next one that frees up. If something has come up and now isn't the right time, reply "later" and I'll check back in a few months. No pressure either way."""
 
 NUDGE_2 = """I didn't want your Expert Session to slip through the cracks, so this is my last reminder.
 
 Registered managers and care leaders across the UK will watch your session, and it links straight to your listing in the Well-Led Business Services Marketplace, so it keeps working for you long after we record.
 
-Book your Thursday here:
+Book your slot here:
 {free}
 
 Gift a Home option:
 {gift}
 
-Or simply reply with a Thursday that works for you and I'll book it for you myself."""
+Or simply reply with a Wednesday or Thursday that works for you and I'll book it for you myself."""
 
 
 def _approved_at(store, aid: str, done_val: str) -> datetime | None:
@@ -558,7 +558,7 @@ def chase(store, send, force: bool = False) -> list[str]:
         name, contact = _name(app), app.get("contact") or {}
         if step < 2:
             text = (NUDGE_1 if step == 0 else NUDGE_2).format(free=FREE_URL, gift=GIFT_URL)
-            subject = ("Your Expert Session: pick your Thursday" if step == 0
+            subject = ("Your Expert Session: pick your slot" if step == 0
                        else "Last reminder: your Well-Led Network Expert Session")
             out = _email(contact, subject, text)
             if out != "emailed":
@@ -607,7 +607,7 @@ def on_guest_reply(store, sender: str, subject: str, body: str, send) -> str:
             store.r.hset("wln:expert_waitlist", aid, datetime.now(UK).isoformat())
             _tag(int(aid), "Expert Session - Waiting list")
             send(f"{name} ({aid}) replied 'waiting list', so they're on the Expert Session waiting list now. "
-                 "They'll be emailed the moment a Thursday frees up.")
+                 "They'll be emailed the moment a slot frees up.")
             return "guest waitlisted"
         state["stop"] = True
         store.r.hset(CHASE, aid, json.dumps(state))
@@ -618,7 +618,7 @@ def on_guest_reply(store, sender: str, subject: str, body: str, send) -> str:
             return "guest later"
         if not _is_booked(store, aid, app):
             send(f"Expert Session guest replied: {name} ({aid}), not booked yet. Automatic follow-ups paused "
-                 f"while you talk.\nThey said: {said}\n\nIf they name a Thursday, book it for them in Vectera "
+                 f"while you talk.\nThey said: {said}\n\nIf they name a day, book it for them in Vectera "
                  f"(the host view shows every slot). Reply 'guest restart {aid}' to resume the reminders.")
         return "guest reply"
     return ""

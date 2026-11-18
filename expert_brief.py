@@ -2,7 +2,7 @@
 and can prepare good questions.
 
 Flow (no extra tools, no extra cost):
-  1. An approved guest books a Thursday slot on the Vectera booking page. Vectera puts the booking in the
+  1. An approved guest books a slot (Wed 5pm, Thu 9am or Thu 5pm) on the Vectera booking page. Vectera puts the booking in the
      kajidoricollective@gmail.com Google Calendar, which Render already reads (GCAL_ICS_URL).
   2. Within about 10 minutes (the wln-keep-awake ping, UK daytime) Yeukai gets a Telegram
      "Expert Session booked" alert: guest, business, date and time, Vectera link. If the guest also
@@ -15,7 +15,7 @@ Flow (no extra tools, no extra cost):
        it fits, and Yeukai's natural bridge into his own support at the end.
   4. The brief goes to Telegram (message + a .md file to keep) on the Tuesday at 4pm before the session,
      or within the hour if the guest books with less notice than that.
-  5. Thursday 7am: a short reminder with the guest, topic and Vectera link (the brief is resent).
+  5. Session day 7am: a short reminder with the guest, topic and Vectera link (the brief is resent).
   Telegram replies: "briefs" lists upcoming bookings; "brief 123" resends the brief for Clustdoc 123.
 
 Render settings: nothing new. Uses GCAL_ICS_URL, CLUSTDOC_API_TOKEN, ANTHROPIC_API_KEY, TELEGRAM_*.
@@ -338,7 +338,7 @@ def check(store, send, force: bool = False) -> str:
                     again = (f" If they don't rebook, they'll get a reminder in {es.CHASE_DAYS[0]} days "
                              f"(reply 'guest stop {aid}' to stop that).")
                 send(f"Expert Session cancelled: {b.get('name') or 'guest'}, {_when(b['start'])}. "
-                     "That Thursday is free again." + again + _offer_waitlist(store, b["start"]))
+                     "That slot is free again." + again + _offer_waitlist(store, b["start"]))
                 notes.append(f"cancelled {uid}")
             store.r.hdel(BOOKED, uid)
         return f"checked {len(events)} entries; " + (", ".join(notes) or "nothing new")
@@ -347,14 +347,14 @@ def check(store, send, force: bool = False) -> str:
 
 
 # ---------------------------------------------------------------- waiting list
-WAIT_TEXT = ("Good news: a Thursday Expert Session slot has just opened up on {when}.\n\n"
+WAIT_TEXT = ("Good news: an Expert Session slot has just opened up on {when}.\n\n"
              "You're on our waiting list, so you're hearing first. Slots go to whoever books first, "
              "so if it suits you, book it now:\n{free}\n\nOr the Gift a Home option:\n{gift}\n\n"
              "If it doesn't suit, no need to reply. You stay on the list for the next one.")
 
 
 def _offer_waitlist(store, start_iso: str) -> str:
-    """Email everyone on the waiting list that a Thursday is free (first to book wins)."""
+    """Email everyone on the waiting list that a slot is free (first to book wins)."""
     if not store.r or not es._token():
         return ""
     wl = store.r.hgetall(WAITLIST)
@@ -379,7 +379,7 @@ def _waitlist_add(store, aid: str) -> str:
     store.r.hset(WAITLIST, aid, datetime.now(UK).isoformat())
     es._tag(int(aid), "Expert Session - Waiting list")
     return (f"{es._name(r.json().get('data') or {})} ({aid}) is on the waiting list. "
-            "They'll be emailed the moment a Thursday frees up.")
+            "They'll be emailed the moment a slot frees up.")
 
 
 def handle(text: str, store, send) -> str | None:

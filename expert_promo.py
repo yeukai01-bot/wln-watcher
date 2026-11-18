@@ -1,7 +1,7 @@
 """Well-Led Network Expert Sessions: everything after the recording, from one Telegram reply.
 
 Flow
-  Thursday      Telegram reminders at 7am, 3:30pm and 5pm list the approved guests waiting to record.
+  Wed/Thu       Telegram reminders before and after each recording slot (Wed 5pm, Thu 9am, Thu 5pm).
   You reply     recorded 123      (123 = the Clustdoc number shown in the list)
   Render then, without anything else from you:
     1. moves the guest to stage 4 (Session recorded) in Clustdoc
@@ -614,37 +614,50 @@ def _waiting_lines(store) -> list[str]:
 
 AFTER = ("Straight after the recording:\n"
          "1. Reply here: recorded 123 (the number next to your guest).\n"
-         "2. Download the video from Vectera and upload it to the Thursday Clinic on the Well-Led Network.\n"
+         "2. Download the video from Vectera and upload it to the Clinic on the Well-Led Network.\n"
          "Everything else (graphics, posts, guest pack, write-up) is done for you.")
 
 
+# Expert Session recording slots (UK time): weekday -> start hours. Wed 5pm, Thu 9am, Thu 5pm.
+SLOTS = {2: [17], 3: [9, 17]}
+
+
+def _slot_label(h: int) -> str:
+    return f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+
+
 def thursday_prompt(store, send) -> None:
-    """Thursday reminders: 7am (with the morning brief), 3:30pm (before the 4pm recording) and 5pm (after it).
+    """Recording-day reminders (name kept for web.py). On each session day (see SLOTS):
+    7am overview of today's slots, 30 minutes before each slot, and 1 hour after each slot.
     Only sent when an approved guest is waiting to record."""
     now = datetime.now(UK)
-    if now.weekday() != 3 or not store.r or not es._token():
+    hours = SLOTS.get(now.weekday())
+    if not hours or not store.r or not es._token():
         return
-    if now.hour == 7:
+    slot, at = None, None
+    if now.hour == 7 and min(hours) > 7:
         slot = "morning"
-    elif now.hour == 15 and now.minute >= 30:
-        slot = "before"
-    elif now.hour == 17:
-        slot = "after"
-    else:
+    for h in hours:
+        if now.hour == h - 1 and now.minute >= 30:
+            slot, at = "before", h
+        elif now.hour == h + 1:
+            slot, at = "after", h
+    if not slot:
         return
-    if not store.r.set(f"{ASKED}:{now:%Y%m%d}:{slot}", "1", nx=True, ex=86400):
+    if not store.r.set(f"{ASKED}:{now:%Y%m%d}:{slot}:{at or 0}", "1", nx=True, ex=86400):
         return
     lines = _waiting_lines(store)
     if not lines:
         return
     guests = "\n".join(lines)
+    when = " and ".join(_slot_label(h) for h in hours)
     if slot == "morning":
-        send("Expert Session today, recording at 4pm in Vectera.\nApproved guests waiting to record:\n"
+        send(f"Expert Session day: recording slots at {when} in Vectera.\nApproved guests waiting to record:\n"
              f"{guests}\n\n{AFTER}")
     elif slot == "before":
-        send(f"Expert Session recording starts in 30 minutes (4pm, Vectera).\n{guests}\n\n{AFTER}")
+        send(f"Expert Session recording slot starts in 30 minutes ({_slot_label(at)}, Vectera).\n{guests}\n\n{AFTER}")
     else:
-        send(f"Has today's Expert Session been recorded?\n{guests}\n\n{AFTER}")
+        send(f"Has the {_slot_label(at)} Expert Session been recorded?\n{guests}\n\n{AFTER}")
 
 
 def handle(text: str, store, send) -> str | None:

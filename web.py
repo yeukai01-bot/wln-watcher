@@ -42,7 +42,7 @@ HELP = (
     "When a guest books you get an alert; their Guest Brief (questions ready) comes the Tuesday before at 4pm.\n"
     "briefs lists booked sessions; brief 123 resends that guest's brief.\n"
     "waitlist shows the waiting list; waitlist add 123 / waitlist remove 123 change it. A guest who emails back "
-    "\"waiting list\" is added automatically. A cancelled Thursday is emailed to everyone on it.\n"
+    "\"waiting list\" is added automatically. A cancelled slot is emailed to everyone on it.\n"
     "Approved guests who don't book get a reminder email after 3 days and a last one after 7; at 10 days you're "
     "told to give them a call. Any email reply from them pauses the reminders and comes to you here.\n"
     "approved shows every approved guest and whether they've booked. guest booked 123 (booked another way), "
@@ -840,7 +840,7 @@ def health():
         expert_sessions.check_in_background(store, telegram.send_message)
     except Exception:
         pass
-    try:  # Thursday 5pm: ask which approved guest has just recorded
+    try:  # Expert Session days (Wed 5pm, Thu 9am, Thu 5pm): reminders before and after each recording slot
         import expert_promo
 
         expert_promo.thursday_prompt(store, telegram.send_message)
