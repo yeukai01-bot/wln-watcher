@@ -25,7 +25,8 @@ from difflib import SequenceMatcher
 
 import requests
 
-API = "https://api.sendpilot.ai/v1"
+# 19 Nov 2026: SendPilot was renamed Sendler; api.sendpilot.ai now fails SSL. Same API, same keys (sp_live_...).
+API = os.getenv("SENDLER_API_BASE", "https://api.sendler.ai/v1")
 SEEN = "li:seen_msgs"          # message ids already handled
 PENDING = "li:pending"         # hash: code -> reply record (json)
 COUNTER = "li:counter"
@@ -37,12 +38,16 @@ STOP_WORDS = {"ltd", "limited", "the", "care", "services", "service", "group", "
               "healthcare", "health", "support", "supported", "living", "homes", "home", "plc", "company"}
 
 
+def _key() -> str:
+    return os.getenv("SENDLER_API_KEY") or os.getenv("SENDPILOT_API_KEY", "")
+
+
 def enabled() -> bool:
-    return bool(os.getenv("SENDPILOT_API_KEY"))
+    return bool(_key())
 
 
 def _h() -> dict:
-    return {"X-API-Key": os.getenv("SENDPILOT_API_KEY", ""), "Content-Type": "application/json", "Accept": "application/json"}
+    return {"X-API-Key": _key(), "Content-Type": "application/json", "Accept": "application/json"}
 
 
 def _get(path: str, params: dict | None = None) -> dict:
@@ -54,7 +59,7 @@ def _get(path: str, params: dict | None = None) -> dict:
 def _post(path: str, body: dict) -> dict:
     r = requests.post(API + path, headers=_h(), data=json.dumps(body), timeout=60)
     if r.status_code >= 400:
-        raise RuntimeError(f"Sendpilot {path} {r.status_code}: {r.text[:300]}")
+        raise RuntimeError(f"Sendler {path} {r.status_code}: {r.text[:300]}")
     return r.json() if r.text else {}
 
 
@@ -151,12 +156,12 @@ def add_radar_prospects(prospects: list[dict], store, send) -> str:
             added = int(r.get("leadsAdded", len(to_add)))
         except Exception as exc:
             LAST_ERROR[0] = str(exc)[:300]
-    msg = (f"LinkedIn (Sendpilot): searched {tried} registered managers, found {len(to_add)}, "
+    msg = (f"LinkedIn (Sendler): searched {tried} registered managers, found {len(to_add)}, "
            f"added {added} to the CQC Radar campaign. It connects first and only messages people who accept.")
     if lines:
         msg += "\n" + "\n".join(lines)
     if LAST_ERROR[0] and not added:
-        msg += f"\nLast Sendpilot error: {LAST_ERROR[0]}"
+        msg += f"\nLast Sendler error: {LAST_ERROR[0]}"
     return msg
 
 
@@ -318,7 +323,7 @@ def handle(text: str, store) -> str | None:
     if not re.match(r"^li\b", t, re.I):
         return None
     if not enabled():
-        return "LinkedIn replies are not switched on yet: add SENDPILOT_API_KEY in Render."
+        return "LinkedIn replies are not switched on yet: add SENDLER_API_KEY (or the old SENDPILOT_API_KEY) in Render."
     m = re.match(r"^li\s+(send|skip|say)\s+(L\d+)\s*(.*)$", t, re.I | re.S)
     if not m:
         waiting = [p for p in _get_pending(store) if p.get("status") == "waiting"]
@@ -442,5 +447,5 @@ def run_backfill(store, send) -> str:
     if lines:
         msg += "\n" + "\n".join(lines)
     if LAST_ERROR[0] and not added and to_add:
-        msg += f"\nLast Sendpilot error: {LAST_ERROR[0]}"
+        msg += f"\nLast Sendler error: {LAST_ERROR[0]}"
     return msg
