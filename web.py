@@ -759,6 +759,22 @@ def viral_loops_webhook(token: str):
     return jsonify(result)
 
 
+@app.get("/wl1000/count")
+def wl1000_count():
+    """Public, cached member count for the progress bar on welllednetwork.com/refer (Brevo 'WLN Members')."""
+    import briefing
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Vary": "Origin", "Cache-Control": "public, max-age=900"}
+    n = store.r.get("wl1000:count_cache") if store.r else None
+    if n is None:
+        n = briefing.list_count(store)
+        if n is not None and store.r:
+            store.r.set("wl1000:count_cache", str(n), ex=3600)
+    return (jsonify({"members": int(n) if n is not None else None, "goal": 1000}), 200, cors)
+
+
 @app.get("/briefing/<week>/<token>")
 def briefing_preview(week: str, token: str):
     """The scheduled weekly briefing exactly as members will see it."""

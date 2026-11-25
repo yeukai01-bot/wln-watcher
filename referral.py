@@ -328,6 +328,7 @@ def on_participation(store, payload: dict, send) -> dict:
     referrer = norm(ref.get("email"))
     role = _find(user, ("role", "professional_role", "professionalrole", "jobrole"))
     service = _find(user, ("service", "service_type", "servicetype", "caretype"))
+    consent = _find(user, ("consent", "gdpr", "marketing", "marketingconsent", "newsletter"))
     member = "existing" if is_existing_member(store, email) else "new"
     p = existing or {}
     p.update({"email": email, "first": first, "last": (user.get("lastname") or "").strip(),
@@ -344,6 +345,7 @@ def on_participation(store, payload: dict, send) -> dict:
         "WL1000_SOURCE": "referral" if p["referrer"] else "organic", "WL1000_REFERRED_BY": p["referrer"],
         "WL1000_REF_CODE": p["code"], "WL1000_REF_LINK": ref_link(p["code"]), "WL1000_MEMBER": p["member_at_signup"],
         "WL1000_JOINED": now().strftime("%Y-%m-%d"), "WL1000_REF_COUNT": p.get("count", 0),
+        "WL1000_CONSENT": "yes" if str(consent).lower() in ("true", "1", "yes", "on") else ("no" if consent else ""),
     })
     _log(store, f"joined campaign: {email} ({'referred by ' + referrer if referrer else 'organic'}, {p['member_at_signup']} member) Brevo {res}")
     # Joined the community a little BEFORE filling in the form? Credit it now.

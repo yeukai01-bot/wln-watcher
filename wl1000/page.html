@@ -1,0 +1,226 @@
+<style>
+#wl1000{--navy:#142B4C;--gold:#B88A2E;--cream:#F4EBD7;--ink:#1f2937;--muted:#4b5563;font-family:Inter,Helvetica,Arial,sans-serif;color:var(--ink);line-height:1.6;background:#fff}
+#wl1000 *{box-sizing:border-box}
+#wl1000 .w{max-width:1080px;margin:0 auto;padding:0 20px}
+#wl1000 section{padding:56px 0}
+#wl1000 h1,#wl1000 h2,#wl1000 h3{font-family:Georgia,'Times New Roman',serif;color:var(--navy);line-height:1.2;margin:0 0 14px}
+#wl1000 h1{font-size:clamp(28px,4.6vw,46px)}
+#wl1000 h2{font-size:clamp(24px,3.4vw,34px)}
+#wl1000 h3{font-size:20px}
+#wl1000 p{margin:0 0 14px;font-size:17px}
+#wl1000 .eyebrow{display:inline-block;font-size:12px;letter-spacing:2px;font-weight:700;color:var(--gold);margin-bottom:14px}
+#wl1000 .bar{background:var(--navy);color:#fff;padding:12px 0;font-size:13px;letter-spacing:1px}
+#wl1000 .bar b{color:var(--gold)}
+#wl1000 .hero{background:var(--cream);padding:48px 0 56px}
+#wl1000 .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:start}
+#wl1000 .btn{display:inline-block;background:var(--navy);color:#fff!important;text-decoration:none;padding:16px 26px;border-radius:8px;font-weight:700;font-size:17px;border:0;cursor:pointer}
+#wl1000 .btn:hover{background:#0d1f38}
+#wl1000 .small{font-size:14px;color:var(--muted)}
+#wl1000 .card{background:#fff;border-radius:14px;box-shadow:0 6px 28px rgba(20,43,76,.12);padding:8px}
+#wl1000 .ticks{list-style:none;padding:0;margin:18px 0}
+#wl1000 .ticks li{padding-left:30px;position:relative;margin:0 0 10px;font-size:17px}
+#wl1000 .ticks li:before{content:"";position:absolute;left:0;top:6px;width:18px;height:18px;border-radius:50%;background:var(--gold)}
+#wl1000 .alt{background:#FAF6EC}
+#wl1000 .cols3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+#wl1000 .box{background:#fff;border:1px solid #eadfc6;border-radius:12px;padding:22px}
+#wl1000 .num{display:inline-flex;width:38px;height:38px;border-radius:50%;background:var(--navy);color:#fff;align-items:center;justify-content:center;font-weight:700;margin-bottom:12px}
+#wl1000 .ladder{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:26px}
+#wl1000 .rung{background:#fff;border:2px solid var(--navy);border-radius:12px;padding:18px 14px;text-align:center;position:relative}
+#wl1000 .rung .n{font-family:Georgia,serif;font-size:40px;color:var(--navy);font-weight:700;line-height:1}
+#wl1000 .rung .l{font-size:12px;letter-spacing:1px;color:var(--gold);font-weight:700;margin:4px 0 10px}
+#wl1000 .rung h3{font-size:16px;margin:0 0 6px}
+#wl1000 .rung .v{font-size:13px;color:var(--muted)}
+#wl1000 .rung.top{background:var(--navy)}
+#wl1000 .rung.top .n,#wl1000 .rung.top h3{color:#fff}
+#wl1000 .rung.top .v{color:#e5e7eb}
+#wl1000 .prog{background:#e8dfca;border-radius:99px;height:22px;overflow:hidden;margin:18px 0 8px}
+#wl1000 .prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--navy),#2c4f80);border-radius:99px;transition:width 1.2s ease}
+#wl1000 .about{display:grid;grid-template-columns:220px 1fr;gap:34px;align-items:center}
+#wl1000 .about img{width:220px;height:220px;object-fit:cover;border-radius:50%;border:6px solid var(--cream)}
+#wl1000 details{border-bottom:1px solid #e5e7eb;padding:16px 0}
+#wl1000 summary{cursor:pointer;font-weight:700;font-size:17px;color:var(--navy);list-style:none}
+#wl1000 summary::-webkit-details-marker{display:none}
+#wl1000 summary:after{content:"+";float:right;color:var(--gold);font-size:22px;line-height:1}
+#wl1000 details[open] summary:after{content:"−"}
+#wl1000 details p{margin:12px 0 0;font-size:16px}
+#wl1000 .terms{font-size:14px;color:var(--muted)}
+#wl1000 .terms h3{font-size:17px;margin-top:18px}
+#wl1000 .terms ol{padding-left:20px}
+#wl1000 .terms li{margin-bottom:8px}
+#wl1000 .final{background:var(--navy);color:#fff;text-align:center}
+#wl1000 .final h2{color:#fff}
+#wl1000 .final .btn{background:var(--gold);color:#142B4C!important}
+#wl1000 .legal{background:#0d1f38;color:#cbd5e1;font-size:13px;padding:22px 0;text-align:center}
+#wl1000 .legal a{color:#e5e7eb;margin:0 8px}
+#wl1000 .dash{margin-top:26px}
+@media (max-width:860px){
+ #wl1000 .grid2,#wl1000 .about{grid-template-columns:1fr}
+ #wl1000 .cols3{grid-template-columns:1fr}
+ #wl1000 .ladder{grid-template-columns:1fr 1fr}
+ #wl1000 .rung.top{grid-column:1 / -1}
+ #wl1000 .about img{margin:0 auto}
+ #wl1000 section{padding:40px 0}
+ #wl1000 .hero{padding:30px 0 40px}
+}
+</style>
+
+<div class="bar"><div class="w"><b>WLN</b> &nbsp;THE WELL-LED NETWORK &middot; FOR UK CARE LEADERS</div></div>
+
+<section class="hero">
+ <div class="w grid2">
+  <div>
+   <span class="eyebrow">THE WELL-LED 1,000</span>
+   <h1>Know Other Care Leaders Who Want to Raise Standards? Help Us Build a Network of 1,000, and Unlock Exclusive Resources Along the Way.</h1>
+   <p>You know those registered managers who stay calm when CQC calls? It is not luck, and it is not a bigger budget. They have people around them to ask, and tools that are already tested.</p>
+   <p>Join a growing community of Registered Managers, care business owners and ambitious care leaders who want to lead with confidence, strengthen their services and stay prepared for what comes next. Introduce the colleagues you rate, and unlock professional resources as they join.</p>
+   <ul class="ticks">
+    <li>Free to join, free to take part</li>
+    <li>Your own link to share, and a dashboard that shows your progress</li>
+    <li>Rewards built for care leaders: tools you will actually use at work</li>
+   </ul>
+   <a class="btn" href="#wl1000-join">Get My Personal Referral Link</a>
+   <p class="small" style="margin-top:12px">Already a member? You can still take part. Your rewards come from the new people you introduce.</p>
+  </div>
+  <div class="card" id="wl1000-join">
+   <form-widget ucid="B23xj49HlLGc57S1zG8zfW83ZAA"></form-widget>
+  </div>
+ </div>
+ <div class="w dash"><milestone-widget ucid="B23xj49HlLGc57S1zG8zfW83ZAA"></milestone-widget></div>
+</section>
+
+<section>
+ <div class="w">
+  <span class="eyebrow">WHY 1,000</span>
+  <h2>Nobody should run a care service on their own</h2>
+  <p>Most care leaders carry the hard calls alone: the 6am sickness call, the safeguarding decision, the night before an inspection. I did it for fifteen years as a CQC Registered Manager, and the thing that made the biggest difference was never a template. It was having people to ask.</p>
+  <p>The Well-Led Network exists so that every registered manager, owner and nominated individual in the UK has that. A thousand care leaders who share what works is a thousand services that are safer, better led and better prepared. That is the mission, and you can help build it.</p>
+ </div>
+</section>
+
+<section class="alt">
+ <div class="w">
+  <span class="eyebrow">WHO IT IS FOR</span>
+  <h2>Built for the people who carry the responsibility</h2>
+  <div class="cols3">
+   <div class="box"><h3>Registered Managers</h3><p>And deputies and aspiring managers getting ready for the role and the fit person interview.</p></div>
+   <div class="box"><h3>Owners, directors and NIs</h3><p>People accountable for governance, growth and what CQC sees when it looks at well-led.</p></div>
+   <div class="box"><h3>Operations and regional leads</h3><p>Across supported living, home care, residential and nursing services, and new providers getting registered.</p></div>
+  </div>
+ </div>
+</section>
+
+<section>
+ <div class="w">
+  <span class="eyebrow">WHAT MEMBERS GET</span>
+  <h2>What the people you introduce will get</h2>
+  <ul class="ticks">
+   <li>A free community where UK care leaders ask real questions and get straight answers</li>
+   <li>A free library of practical tools: audits, trackers, packs and checklists built for CQC regulated services</li>
+   <li>The Well-Led Clinic, where members bring a question live and get an answer from someone who has done the job</li>
+   <li>Practical articles every week on CQC, governance, staffing and leadership</li>
+  </ul>
+  <p>So when you share your link, you are not asking a favour. You are handing a colleague something useful.</p>
+ </div>
+</section>
+
+<section class="alt">
+ <div class="w">
+  <span class="eyebrow">HOW IT WORKS</span>
+  <h2>Three simple steps</h2>
+  <div class="cols3">
+   <div class="box"><span class="num">1</span><h3>Get your link</h3><p>Fill in the short form. Your personal referral link appears straight away, and we email it to you.</p></div>
+   <div class="box"><span class="num">2</span><h3>Share it with care leaders</h3><p>Send it to colleagues, your deputy, other managers you know. WhatsApp, LinkedIn or email, whatever you already use.</p></div>
+   <div class="box"><span class="num">3</span><h3>Unlock rewards</h3><p>Each time someone you introduced joins the Well-Led Network community, it counts. Rewards are sent to you automatically.</p></div>
+  </div>
+ </div>
+</section>
+
+<section>
+ <div class="w">
+  <span class="eyebrow">THE REWARDS</span>
+  <h2>Introduce care leaders. Unlock tools you will actually use.</h2>
+  <p>Rewards build up. Reach 5 and you have everything from 1, 3 and 5.</p>
+  <div class="ladder">
+   <div class="rung"><div class="n">1</div><div class="l">REFERRAL</div><h3>Well-Led Governance Checklist</h3><div class="v">Exclusive to this campaign</div></div>
+   <div class="rung"><div class="n">3</div><div class="l">REFERRALS</div><h3>When the Systems Go Down: Staff Card Set</h3><div class="v">Worth &pound;47</div></div>
+   <div class="rung"><div class="n">5</div><div class="l">REFERRALS</div><h3>Well-Led Live VIP Upgrade</h3><div class="v">Worth &pound;97</div></div>
+   <div class="rung"><div class="n">10</div><div class="l">REFERRALS</div><h3>72-Hour Care Service Continuity Toolkit</h3><div class="v">Worth &pound;147</div></div>
+   <div class="rung top"><div class="n">25</div><div class="l">REFERRALS</div><h3>Well-Led Network Ambassador</h3><div class="v">Plus an exclusive group leadership session with Yeukai</div></div>
+  </div>
+ </div>
+</section>
+
+<section class="alt" id="wl1000-progress">
+ <div class="w">
+  <span class="eyebrow">OUR PROGRESS</span>
+  <h2><span id="wl1000-n">Care leaders</span> have joined so far</h2>
+  <div class="prog"><i id="wl1000-bar"></i></div>
+  <p class="small" id="wl1000-note">Members of the Well-Led Network community, counted from our member list. Updated through the day.</p>
+ </div>
+</section>
+
+<section>
+ <div class="w about">
+  <img src="https://ezycom.b-cdn.net/7/551/faebbe8731c2/yeukai-profile-headshot-informal-pop-mtviogweutvj.jpg" alt="Yeukai Kajidori">
+  <div>
+   <span class="eyebrow">WHO IS BEHIND THIS</span>
+   <h2>Yeukai Kajidori</h2>
+   <p>Twenty-three years in UK health and social care, fifteen of them as a CQC Registered Manager. I started in a children's home and worked my way up to senior operations.</p>
+   <ul class="ticks">
+    <li>Led Support Horizons to local authority Preferred Provider status with zero deficiencies in its annual quality review</li>
+    <li>Grew a mental health supported living provider from one site to five services in two years</li>
+    <li>Ran Home Angels homecare: two branches, about 3,000 hours of care a week, rated Good by CQC</li>
+    <li>MBA, Level 7 in Strategic Management and Leadership, and Level 7 in Health and Social Care Management</li>
+   </ul>
+   <p>Founder of the Well-Led Network and creator of the Well-Led and Safe Supported Living Framework.</p>
+  </div>
+ </div>
+</section>
+
+<section class="alt">
+ <div class="w">
+  <span class="eyebrow">QUESTIONS</span>
+  <h2>Frequently asked questions</h2>
+  <details><summary>Does it cost anything?</summary><p>No. Joining the campaign is free, and so is joining the Well-Led Network community.</p></details>
+  <details><summary>What counts as a successful referral?</summary><p>Someone who signs up through your link and then joins the Well-Led Network community with their own email address. They must be new to the community and work in or around UK care.</p></details>
+  <details><summary>I am already a member. Can I take part?</summary><p>Yes. Get your link and share it. Your rewards come from the new people you introduce.</p></details>
+  <details><summary>How do I receive my rewards?</summary><p>By email, automatically, as soon as a milestone is reached. Paid resources come with a personal one-time code that you use on the Well-Led Network.</p></details>
+  <details><summary>What is the Well-Led Live VIP Upgrade?</summary><p>VIP access to Well-Led Live 2027, our online summit for UK care leaders on 18 to 20 March 2027, 5pm to 8pm UK time, including the VIP implementation workshop and group Q&amp;A. Claim it before the event starts. If the event has already passed when you reach 5 referrals, you will be offered an equivalent alternative.</p></details>
+  <details><summary>Do I have to give you my colleagues' details?</summary><p>No, and please don't. You share your own link with people you know. They decide whether to sign up.</p></details>
+  <details><summary>How do I see my progress?</summary><p>Come back to this page with the same email address and your dashboard shows your referrals and your next reward. We also email you as you reach each milestone.</p></details>
+ </div>
+</section>
+
+<section id="terms">
+ <div class="w terms">
+  <h2 style="font-size:24px">Campaign terms and privacy</h2>
+  <h3>The Well-Led 1,000 referral campaign terms</h3>
+  <ol>
+   <li>The campaign is run by The Kajidori Collective Ltd, trading as Well-Led Network (company number 17556769, 71-75 Shelton Street, Covent Garden, London WC2H 9JQ).</li>
+   <li>Participants must be 18 or over and work in, or be preparing to work in, health and social care in the UK.</li>
+   <li>A referral counts only when the person signs up through your personal link and then joins the Well-Led Network community with their own, genuine email address. They must not already be a member, and must not be you.</li>
+   <li>Self-referrals, duplicate or disposable email addresses, made-up identities and any automated or bulk sign-ups do not count. We may withhold rewards or remove participants where we reasonably suspect misuse.</li>
+   <li>Rewards build up as you reach each milestone (1, 3, 5, 10 and 25 referrals). Each reward is given once per person, is for your own use, and has no cash alternative.</li>
+   <li>Paid rewards are delivered as a personal one-time code for the Well-Led Network. The Well-Led Live VIP Upgrade applies to Well-Led Live 2027 (18 to 20 March 2027) and must be claimed before the event starts. If a reward stops being available, we will offer an alternative of similar value.</li>
+   <li>Please share your link only with people you know or who would reasonably expect to hear from you, and never send it as bulk or unsolicited messages. Don't post it where the rules forbid promotion. You are responsible for how you share it.</li>
+   <li>Ambassador status at 25 referrals includes recognition (only with your consent), ambassador materials and a place in a group leadership session. It does not include one-to-one support or any paid programme.</li>
+   <li>We may change, pause or end the campaign at any time. Rewards you have already unlocked will be honoured.</li>
+  </ol>
+  <h3>Your data</h3>
+  <p>We use your name, email, role and service type to run the campaign, show your progress and send your rewards. If you tick the box, we will also send you practical emails on CQC, governance and leadership, and you can unsubscribe at any time. We never ask for your colleagues' details. Campaign data is kept for the life of the campaign and up to 12 months after it ends. Full details are in our <a href="https://gettermscdn.com/view/WAvNV/privacy/en-au" target="_blank" rel="noopener">privacy policy</a>. Questions: support@welllednetwork.com</p>
+ </div>
+</section>
+
+<section class="final">
+ <div class="w">
+  <h2>Know a care leader who would get value from this?</h2>
+  <p style="color:#e5e7eb">Get your link now. It takes 30 seconds.</p>
+  <a class="btn" href="#wl1000-join">Get My Personal Referral Link</a>
+ </div>
+</section>
+
+<div class="legal"><div class="w">&copy; The Kajidori Collective Ltd, trading as Well-Led Network. Registered in England and Wales, company number 17556769.<br>
+ <a href="https://gettermscdn.com/view/WAvNV/privacy/en-au" target="_blank" rel="noopener">Privacy</a>
+ <a href="https://gettermscdn.com/view/WAvNV/terms-of-service/en-au" target="_blank" rel="noopener">Terms</a>
+ <a href="https://gettermscdn.com/view/WAvNV/return/en-au" target="_blank" rel="noopener">Refunds</a>
+ <a href="https://gettermscdn.com/view/WAvNV/cookies/en-au" target="_blank" rel="noopener">Cookies</a></div></div>
