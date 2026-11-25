@@ -235,7 +235,14 @@ def on_member_event(store, event: str, payload, send) -> dict:
     ev = (event or _find(payload, ("event", "type", "event_type")) or "").lower()
     if any(w in ev for w in ("delete", "removed", "suspend")):
         return {"ok": True, "result": remove_member(store, m["email"])}
-    return {"ok": True, "result": add_member(store, m)}
+    result = add_member(store, m)
+    try:  # The Well-Led 1,000: a referred person counts once they join the community
+        import referral
+
+        referral.on_wln_join(store, m["email"], send)
+    except Exception as exc:
+        send(f"The Well-Led 1,000: could not check the new member {m['email']} for a referral ({type(exc).__name__}).")
+    return {"ok": True, "result": result}
 
 
 def member_token() -> str:

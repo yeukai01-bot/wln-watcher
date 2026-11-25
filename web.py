@@ -86,7 +86,9 @@ HELP = (
     "Cold email agent (NotiQ):\n"
     "Only replies worth your time arrive here: HOT LEAD (a real buying signal) or NEEDS YOU (sensitive, or asks for you). "
     "Out of office, no thanks, thank-yous and Tuesday requests stay quiet; the agent handles them and they are counted in the Monday review. "
-    "You are also told if a sending inbox disconnects. notiq key shows the webhook link to paste into NotiQ."
+    "You are also told if a sending inbox disconnects. notiq key shows the webhook link to paste into NotiQ.\n\n"
+    "The Well-Led 1,000 (referral campaign): refer shows the status, refer report the weekly report, refer pending "
+    "rewards waiting, refer codes <cards|vip|toolkit> CODE1 CODE2 loads reward codes, refer setup the Viral Loops webhook link."
 )
 
 
@@ -170,6 +172,14 @@ def handle_text(text: str) -> str:
         eb = None
     if eb is not None:
         return eb
+    try:
+        import referral
+
+        rf = referral.handle(text, store, telegram.send_message)
+    except ImportError:
+        rf = None
+    if rf is not None:
+        return rf
     import briefing
 
     bf = briefing.handle(text, store)
@@ -731,6 +741,22 @@ def wln_members(token: str):
         telegram.send_message(f"A Well-Led Network member update could not be passed to Brevo ({type(exc).__name__}: {str(exc)[:150]}).")
         result = {"ok": True}
     return (jsonify(result), 200, cors)
+
+
+@app.post("/vl/<token>")
+def viral_loops_webhook(token: str):
+    """The Well-Led 1,000 (Viral Loops campaign 150443): participation, milestone and reward webhooks."""
+    import referral
+
+    if not hmac.compare_digest(token, referral.token()):
+        abort(404)
+    payload = request.get_json(silent=True, force=True) or {}
+    try:
+        result = referral.on_webhook(store, payload, telegram.send_message)
+    except Exception as exc:  # never make Viral Loops retry forever; tell Yeukai instead
+        telegram.send_message(f"The Well-Led 1,000: a Viral Loops update could not be handled ({type(exc).__name__}: {str(exc)[:150]}).")
+        result = {"ok": True}
+    return jsonify(result)
 
 
 @app.get("/briefing/<week>/<token>")

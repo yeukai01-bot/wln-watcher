@@ -264,6 +264,13 @@ def main() -> None:
             telegram.send_message("The weekly briefing could not be drafted this morning, so nothing is scheduled yet:\n\n" + tb[-1500:])
         except Exception:
             pass
+    try:  # The Well-Led 1,000: retry waiting rewards; Monday weekly report
+        import referral
+        from store import Store
+
+        print("[wl1000]", referral.daily(Store(), telegram.send_message))
+    except Exception as exc:
+        print("wl1000 daily failed:", exc)
     backlog_notice()
     sys.exit(rc)
 
