@@ -19,7 +19,7 @@ Safety
 
 Render settings needed (all in the wln-secrets group)
   VL_API_TOKEN       Viral Loops > campaign > Installation: private API token (Yeukai pastes it)
-  VL_PUBLIC_TOKEN    Viral Loops campaign public token / campaign id shown on the Installation step
+  VL_PUBLIC_TOKEN    optional; defaults to the campaign public id B23xj49HlLGc57S1zG8zfW83ZAA
   REFERRAL_LIVE      leave unset for test mode; "1" once Yeukai approves the launch
   WL1000_REWARD1_URL link to the Well-Led Governance Checklist (free library item)
   WL1000_AMBASSADOR_URL  where ambassadors pick their group session time (optional)
@@ -306,7 +306,7 @@ The Kajidori Collective Ltd, trading as Well-Led Network. Registered in England 
 
 # ---------------------------------------------------------------- Viral Loops
 def vl_convert(email: str) -> str:
-    tok, pub = os.getenv("VL_API_TOKEN", "").strip(), os.getenv("VL_PUBLIC_TOKEN", "").strip()
+    tok, pub = os.getenv("VL_API_TOKEN", "").strip(), os.getenv("VL_PUBLIC_TOKEN", "B23xj49HlLGc57S1zG8zfW83ZAA").strip()
     if not tok:
         return "VL_API_TOKEN not set in Render"
     body = {"user": {"email": email}}
