@@ -33,6 +33,7 @@ Telegram commands
   refer report       the weekly report now
   refer pending      rewards waiting to be delivered, and why
   refer retry        try every pending reward again now
+  refer testjoin <test address>   act as if a +wl1000test address joined the community (testing only)
 """
 from __future__ import annotations
 
@@ -659,6 +660,13 @@ def handle(text: str, store, send) -> str | None:
         if _r(store):
             store.r.rpush(K_CODES + pool, *codes)
         return f"Loaded {len(codes)} {pool} codes. {store.r.llen(K_CODES + pool) if _r(store) else 0} available."
+    if low.startswith("refer testjoin"):
+        # Test only: act as if a TEST address just joined the community (the community itself treats
+        # name+tag@ as name@, so a +wl1000test address can never really join). Real addresses refused.
+        email = norm(parts[2]) if len(parts) > 2 else ""
+        if not email or not is_test(email):
+            return "Only test addresses (containing +wl1000test) can be used with refer testjoin."
+        return f"Test join for {email}: {on_wln_join(store, email, send)}"
     if low == "refer setup":
         return (f"Viral Loops webhook URL (paste into the campaign's Webhook integration, all four events):\n"
                 f"https://wln-replies.onrender.com/vl/{token()}\n\nBrevo: {ensure_attributes(store)}; list id {list_id(store)}.")

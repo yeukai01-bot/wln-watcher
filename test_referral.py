@@ -118,4 +118,6 @@ print("PASS ambassador email + Telegram notice")
 # 12. report + webhook token + commands
 print(referral.report(store)); assert referral.handle("hello", store, send) is None
 for e in B.emails: assert "—" not in e["htmlContent"].split("WL1000")[0] or True
+assert "Only test" in referral.handle("refer testjoin real.person@care.co.uk", store, send)
+print(referral.handle("refer testjoin yeukai+wl1000test9@gmail.com", store, send)); print("PASS testjoin guarded")
 print("ALL TESTS PASSED")
