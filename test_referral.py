@@ -1,3 +1,4 @@
+import os
 """Offline tests for The Well-Led 1,000 (referral.py). Brevo and Viral Loops are faked."""
 import json, os
 os.environ.update({"WEBHOOK_SECRET": "x", "BREVO_API_KEY": "k", "VL_API_TOKEN": "t", "VL_PUBLIC_TOKEN": "pub"})
@@ -120,4 +121,15 @@ print(referral.report(store)); assert referral.handle("hello", store, send) is N
 for e in B.emails: assert "—" not in e["htmlContent"].split("WL1000")[0] or True
 assert "Only test" in referral.handle("refer testjoin real.person@care.co.uk", store, send)
 print(referral.handle("refer testjoin yeukai+wl1000test9@gmail.com", store, send)); print("PASS testjoin guarded")
+# 13. clear test data before launch
+os.environ.pop("REFERRAL_LIVE", None)
+real_before = len([k for k in store.r.scan_iter(referral.K_P + "*") if "wl1000test" not in k])
+store.r.set(referral.K_P + "a+wl1000test1@gmail.com", "{}"); store.r.sadd(referral.K_CONVERTED, "a+wl1000test1@gmail.com")
+store.r.sadd(referral.K_PENDING, "a+wl1000test1@gmail.com|3"); store.r.set(referral.K_REWARD + "a+wl1000test1@gmail.com:1", "{}")
+out = referral.handle("refer cleartest", store, send); print(out)
+assert not [k for k in store.r.scan_iter("wl1000:*") if "wl1000test" in k]
+assert not [e for e in store.r.smembers(referral.K_CONVERTED) | store.r.smembers(referral.K_PENDING) if "wl1000test" in e]
+assert len([k for k in store.r.scan_iter(referral.K_P + "*")]) == real_before and not store.r.hlen(referral.K_STATS)
+os.environ["REFERRAL_LIVE"] = "1"; assert "Refused" in referral.handle("refer cleartest", store, send)
+os.environ.pop("REFERRAL_LIVE", None); print("PASS cleartest removes only test data, refused when live")
 print("ALL TESTS PASSED")

@@ -605,6 +605,37 @@ def daily(store, send) -> str:
     return out
 
 
+def clear_test(store) -> str:
+    """Before launch only: forget every test participant and zero the counters, so the
+    first live report starts from nothing. Real participants are left alone."""
+    if live():
+        return "Refused: the campaign is live. Test data can only be cleared before launch."
+    if not _r(store):
+        return "No store connected."
+    r = store.r
+    gone = 0
+    for prefix in (K_P, K_JOINED, K_REWARD):
+        for k in list(r.scan_iter(prefix + "*")):
+            email = k[len(prefix):].rsplit(":", 1)[0] if prefix == K_REWARD else k[len(prefix):]
+            if is_test(email):
+                gone += r.delete(k)
+    for e in list(r.smembers(K_CONVERTED)):
+        if is_test(e):
+            gone += r.srem(K_CONVERTED, e)
+    for it in list(r.smembers(K_PENDING)):
+        if is_test(it.partition("|")[0]):
+            gone += r.srem(K_PENDING, it)
+    for raw in list(r.lrange(K_REJECTED, 0, -1)):
+        try:
+            if is_test(json.loads(raw).get("email", "")):
+                gone += r.lrem(K_REJECTED, 0, raw)
+        except Exception:
+            pass
+    r.delete(K_STATS, "wl1000:last_raw")
+    _log(store, f"test data cleared ({gone} records), counters reset")
+    return f"Cleared {gone} test records and reset the counters. Real participants untouched."
+
+
 # ---------------------------------------------------------------- webhook + Telegram
 def on_webhook(store, payload: dict, send) -> dict:
     if _r(store):
@@ -667,6 +698,8 @@ def handle(text: str, store, send) -> str | None:
         if not email or not is_test(email):
             return "Only test addresses (containing +wl1000test) can be used with refer testjoin."
         return f"Test join for {email}: {on_wln_join(store, email, send)}"
+    if low == "refer cleartest":
+        return clear_test(store)
     if low == "refer setup":
         return (f"Viral Loops webhook URL (paste into the campaign's Webhook integration, all four events):\n"
                 f"https://wln-replies.onrender.com/vl/{token()}\n\nBrevo: {ensure_attributes(store)}; list id {list_id(store)}.")
