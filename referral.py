@@ -110,7 +110,12 @@ def live() -> bool:
 
 
 def is_test(email: str) -> bool:
-    return TEST_MARK in (email or "").lower()
+    """A test address: contains +wl1000test, or is listed in WL1000_TEST_EMAILS (comma separated).
+    The Well-Led Network treats name+tag@ as the same person as name@, so a +tag address cannot be
+    used to join the community as a test member; a listed plain address can."""
+    e = (email or "").strip().lower()
+    listed = {x.strip().lower() for x in os.getenv("WL1000_TEST_EMAILS", "").split(",") if x.strip()}
+    return TEST_MARK in e or e in listed
 
 
 def may_act(email: str) -> bool:
