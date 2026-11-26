@@ -21,7 +21,7 @@ import html
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -271,7 +271,39 @@ def write(article_text: str, article_url: str) -> dict:
     return data
 
 
-def render(b: dict, article_url: str) -> str:
+# The Well-Led 1,000 referral ask: one short box in every briefing sent up to and including WL1000_UNTIL
+# (8 sends from 8 Dec 2026). Wording rotates weekly so it never reads as the same banner.
+WL1000_UNTIL = date(2027, 1, 26)
+WL1000_LINK = "https://shor.by/wl1000-email"
+WL1000_ASKS = [
+    ("Who would you want in the room?",
+     "More than 200 leaders in the community, and over 400 across our groups. I want to take it to 1,000. If there is "
+     "a registered manager, care owner or nominated individual you rate, send them your personal invite link. When they "
+     "join, it counts towards a thank-you from me, starting with the Well-Led Governance Checklist."),
+    ("One person you rate",
+     "Think of one care leader who would get something from this network. Send them your personal invite link. Each "
+     "person who joins through it counts towards practical tools from me, starting with the Well-Led Governance Checklist."),
+    ("Help build the Well-Led 1,000",
+     "More than 200 leaders in the community, and over 400 across our groups, so far. The aim is 1,000 care leaders who "
+     "do not have to work things out alone. Your personal invite link is one click away."),
+    ("The managers who stay calm have people to ring",
+     "If you know a manager who is carrying it all on their own, send them your personal invite link. It is free to "
+     "join, and every person who joins through your link counts towards a thank-you from me."),
+]
+
+
+def wl1000_box(send_day: date | None) -> str:
+    if send_day is None or send_day > WL1000_UNTIL:
+        return ""
+    title, text = WL1000_ASKS[((send_day - date(2026, 12, 8)).days // 7) % len(WL1000_ASKS)]
+    e = html.escape
+    return (f'<div style="border:1px solid #B88A2E;border-radius:6px;padding:16px 18px;margin:24px 0">'
+            f'<p style="font-size:12px;letter-spacing:1px;color:#B88A2E;margin:0 0 8px">ONE ASK FROM ME</p>'
+            f'<strong style="color:#142B4C">{e(title)}</strong><br>{e(text)} '
+            f'<a href="{WL1000_LINK}" style="color:#142B4C">Get my invite link</a></div>')
+
+
+def render(b: dict, article_url: str, send_day: date | None = None) -> str:
     e = html.escape
     steps = "".join(f"<li style=\"margin:0 0 10px\"><strong>{e(s['title'])}</strong> {e(s['text'])}</li>" for s in b["steps"])
     also = "".join(
@@ -293,6 +325,7 @@ def render(b: dict, article_url: str) -> str:
 <p>{e(b['closing'])}</p>
 <p style="margin:24px 0">{btn}</p>
 <p style="font-size:12px;letter-spacing:1px;color:#B88A2E;margin:28px 0 10px">ALSO THIS WEEK</p>{also}
+{wl1000_box(send_day)}
 <div style="background:#F4EBD7;border-radius:6px;padding:16px 18px;margin:24px 0">
 <strong style="color:#142B4C">Bring your question to the Well-Led Clinic</strong><br>
 The Clinic runs live, and the next date is always on the Events page. Ask anything on CQC, registration, inspection or
@@ -344,8 +377,8 @@ def monday(store, telegram, now: datetime | None = None, force: bool = False) ->
             skipped.append(t["url"])
             continue
         b = write(text, t["url"])
-        html_body = render(b, t["url"])
         send_at = _tuesday_send_time(now)
+        html_body = render(b, t["url"], send_at.date())
         lid = list_id(store)
         r = _brevo("POST", "/emailCampaigns", {
             "name": f"Weekly Well-Led Briefing - {send_at:%d %b %Y}", "subject": b["subject"], "previewText": b["preheader"],
