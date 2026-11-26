@@ -98,19 +98,18 @@ assert store.r.hget(referral.K_STATS, "rejected") == "3"
 milestone(t1, 1); assert B.emails[-1]["subject"].startswith("Your Well-Led Governance Checklist")
 milestone(t1, 1); assert len(B.emails) == 1; print("PASS reward 1 delivered once only")
 
-# 9. milestone 3 without codes -> pending + alert, then codes loaded + retry
-milestone(t1, 3); assert len(B.emails) == 1 and any("waiting" in m for m in msgs)
-print(referral.handle("refer codes cards C1 C2", store, send))
-print(referral.handle("refer retry", store, send))
-assert "C1" in B.emails[-1]["htmlContent"] and "paywall/784" in B.emails[-1]["htmlContent"]
-assert store.r.scard(referral.K_PENDING) == 0; print("PASS no-code pending, retried after codes loaded")
+# 9. milestone 3 = free claim link (no codes needed)
+milestone(t1, 3); assert len(B.emails) == 2 and "paywall/795/checkout" in B.emails[-1]["htmlContent"]
+assert "Claim my" in B.emails[-1]["htmlContent"]
+milestone(t1, 3); assert len(B.emails) == 2; print("PASS reward 3 claim link delivered once only")
 
-# 10. email failure keeps the same code and retries
-store.r.rpush(referral.K_CODES + "vip", "V1", "V2"); B.fail_email = True
-milestone(t1, 5); assert store.r.llen(referral.K_CODES + "vip") == 1
+# 10. email failure -> pending, retried, VIP terms shown
+B.fail_email = True
+milestone(t1, 5); assert store.r.scard(referral.K_PENDING) == 1 and any("waiting" in m for m in msgs)
 B.fail_email = False; referral.retry_pending(store, send)
-assert "V1" in B.emails[-1]["htmlContent"] and "18 March 2027" in B.emails[-1]["htmlContent"]
-assert store.r.llen(referral.K_CODES + "vip") == 1; print("PASS failed email retried with same code, VIP terms shown")
+assert "paywall/797/checkout" in B.emails[-1]["htmlContent"] and "18 March 2027" in B.emails[-1]["htmlContent"]
+assert store.r.scard(referral.K_PENDING) == 0; print("PASS failed email retried, VIP terms shown")
+milestone(t1, 10); assert "paywall/796/checkout" in B.emails[-1]["htmlContent"]; print("PASS toolkit claim link")
 
 # 11. ambassador
 milestone(t1, 25); assert "Ambassador" in B.emails[-1]["subject"] and any("Ambassador" in m for m in msgs)

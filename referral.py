@@ -24,15 +24,14 @@ Render settings needed (all in the wln-secrets group)
   WL1000_REWARD1_URL link to the Well-Led Governance Checklist (free library item)
   WL1000_AMBASSADOR_URL  where ambassadors pick their group session time (optional)
 
-Reward codes: single-use 100% codes created in the Well-Led Network for each paywall are loaded with the
-Telegram command  "refer codes cards CODE1 CODE2 ..."  (or vip / toolkit). One code is used per person.
+Rewards at 3, 5 and 10 are free (GBP 0) hidden paywalls in the Well-Led Network (795 Staff Card Set,
+797 VIP Upgrade, 796 Toolkit). The reward email carries the private checkout link: tick the terms, Complete,
+done. No codes to make or load. (The Well-Led Network has no coupon feature, checked 26 Nov 2026.)
 
 Telegram commands
   refer              campaign status: participants, converted referrals, rewards delivered, pending
   refer report       the weekly report now
   refer pending      rewards waiting to be delivered, and why
-  refer codes        how many reward codes are left in each pool
-  refer codes <pool> <code> [<code> ...]   load codes (pools: cards, vip, toolkit)
   refer retry        try every pending reward again now
 """
 from __future__ import annotations
@@ -69,15 +68,15 @@ K_LOG = "wl1000:log"         # recent events (capped)
 REWARDS = {
     1: {"name": "Well-Led Governance Checklist", "kind": "link",
         "url_env": "WL1000_REWARD1_URL", "default_url": "https://shor.by/wl1000-checklist"},
-    3: {"name": "When the Systems Go Down: Staff Card Set", "kind": "code", "pool": "cards",
-        "checkout": "https://www.welllednetwork.com/paywall/784/checkout"},
-    5: {"name": "Well-Led Live VIP Upgrade", "kind": "code", "pool": "vip",
-        "checkout": "https://www.welllednetwork.com/paywall/787/checkout",
+    3: {"name": "When the Systems Go Down: Staff Card Set", "kind": "claim",
+        "checkout": "https://www.welllednetwork.com/paywall/795/checkout"},
+    5: {"name": "Well-Led Live VIP Upgrade", "kind": "claim",
+        "checkout": "https://www.welllednetwork.com/paywall/797/checkout",
         "terms": ("Your VIP upgrade is for Well-Led Live 2027 (Thursday 18 to Saturday 20 March 2027, 5pm to 8pm UK time), "
-                  "plus the VIP implementation workshop and group Q&A. Use your code before 18 March 2027. "
+                  "plus the VIP implementation workshop and group Q&A. Claim it before 18 March 2027. "
                   "It is for you personally and cannot be swapped for cash.")},
-    10: {"name": "72-Hour Care Service Continuity Toolkit", "kind": "code", "pool": "toolkit",
-         "checkout": "https://www.welllednetwork.com/paywall/783/checkout"},
+    10: {"name": "72-Hour Care Service Continuity Toolkit", "kind": "claim",
+         "checkout": "https://www.welllednetwork.com/paywall/796/checkout"},
     25: {"name": "Well-Led Network Ambassador", "kind": "ambassador"},
 }
 POOLS = ("cards", "vip", "toolkit")
@@ -451,6 +450,8 @@ def deliver(store, email: str, milestone: int, send) -> str:
         link = reward["checkout"]
     elif reward["kind"] == "link":
         link = os.getenv(reward["url_env"], reward["default_url"])
+    elif reward["kind"] == "claim":
+        link = reward["checkout"]
     subject, body = reward_email(reward, milestone, p, code, link)
     res = send_email(email, first, subject, body)
     if res != "sent":
@@ -529,6 +530,15 @@ def reward_email(reward: dict, milestone: int, p: dict, code: str, link: str) ->
                 f"not show an inspector today. That list is your next month's work.</p>{next_line}")
         return f"Your {reward['name']} is ready", body
     terms = f"<p style=\"font-size:14px;color:#4b5563\">{e(reward['terms'])}</p>" if reward.get("terms") else ""
+    if reward["kind"] == "claim":
+        body = (f"<p>You have now introduced {count} care leaders to the Well-Led Network. Thank you.</p>"
+                f"<p>You have unlocked the <strong>{e(reward['name'])}</strong>. It is free for you, and it takes "
+                f"about 30 seconds to claim:</p>"
+                f"<p style=\"margin:22px 0\"><a href=\"{e(link)}\" style=\"display:inline-block;background:#142B4C;color:#ffffff;"
+                f"text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold\">Claim my {e(reward['name'])}</a></p>"
+                f"<p>Sign in with this email address, tick the terms box and press Complete. The total shows Free, "
+                f"and no card is needed. This link is just for you, so please don't share it.</p>{terms}{next_line}")
+        return f"You unlocked the {reward['name']}", body
     body = (f"<p>You have now introduced {count} care leaders to the Well-Led Network. Thank you.</p>"
             f"<p>You have unlocked the <strong>{e(reward['name'])}</strong>. Here is how to claim it:</p>"
             f"<ol><li>Open this page: <a href=\"{e(link)}\">{e(link)}</a></li>"
@@ -571,9 +581,8 @@ def report(store) -> str:
         f"Rewards delivered by milestone: {rewards}",
         f"Rewards waiting: {s['pending']}" + (" (say: refer pending)" if s["pending"] else ""),
         f"Referrals rejected (self, duplicate, disposable, existing member): {s.get('rejected', 0)}",
-        "Codes left: " + ", ".join(f"{k} {v}" for k, v in s["codes"].items()),
     ]
-    low = [k for k, v in s["codes"].items() if v < 5]
+    low = [k for k, v in s["codes"].items() if v < 5 and any(r.get("pool") == k for r in REWARDS.values())]
     if low:
         lines.append("NEEDS ATTENTION: fewer than 5 codes left for " + ", ".join(low) + ". Make more in the Well-Led Network "
                      "and load them with: refer codes <pool> CODE1 CODE2 ...")
@@ -618,7 +627,7 @@ def handle(text: str, store, send) -> str | None:
         s = stats(store)
         return (f"The Well-Led 1,000 ({'LIVE' if s['live'] else 'TEST MODE'}): {s.get('participants', 0)} participants, "
                 f"{s.get('converted', 0)} referrals credited, {s.get('rejected', 0)} rejected, {s['pending']} rewards waiting. "
-                f"Codes left: " + ", ".join(f"{k} {v}" for k, v in s["codes"].items()) + ". Say refer report for the full picture.")
+                f"Say refer report for the full picture.")
     if low == "refer report":
         return report(store)
     if low == "refer retry":
@@ -649,4 +658,4 @@ def handle(text: str, store, send) -> str | None:
         return (f"Viral Loops webhook URL (paste into the campaign's Webhook integration, all four events):\n"
                 f"https://wln-replies.onrender.com/vl/{token()}\n\nBrevo: {ensure_attributes(store)}; list id {list_id(store)}.")
     return ("refer: status. refer report: weekly report now. refer pending: rewards waiting. refer retry: try them again. "
-            "refer codes [pool CODE ...]: see or load reward codes (cards, vip, toolkit). refer setup: webhook link.")
+            "refer setup: webhook link.")
