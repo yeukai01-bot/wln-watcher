@@ -87,6 +87,7 @@ HELP = (
     "Only replies worth your time arrive here: HOT LEAD (a real buying signal) or NEEDS YOU (sensitive, or asks for you). "
     "Out of office, no thanks, thank-yous and Tuesday requests stay quiet; the agent handles them and they are counted in the Monday review. "
     "You are also told if a sending inbox disconnects. notiq key shows the webhook link to paste into NotiQ.\n\n"
+    "Call-me requests (Grace rings people who ask): callme shows the status, callme pause stops calls, callme resume restarts. "
     "The Well-Led 1,000 (referral campaign): refer shows the status, refer report the weekly report, refer pending "
     "rewards waiting, refer codes <cards|vip|toolkit> CODE1 CODE2 loads reward codes, refer setup the Viral Loops webhook link."
 )
@@ -130,6 +131,14 @@ def _draft_in_background(aid: str) -> None:
 
 
 def handle_text(text: str) -> str:
+    try:
+        import callme
+
+        cm = callme.command(text, store)
+    except ImportError:
+        cm = None
+    if cm is not None:
+        return cm
     try:
         import followups
 
@@ -693,6 +702,33 @@ def selfcheck_score():
     return (jsonify(result), 200, cors)
 
 
+@app.route("/call-me", methods=["GET", "POST", "OPTIONS"])
+def call_me():
+    """Call-me form: GET shows the page, POST asks Grace (Dialora) to ring the person. See callme.py."""
+    import callme
+
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else "https://www.welllednetwork.com",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type",
+            "Vary": "Origin"}
+    if request.method == "OPTIONS":
+        return ("", 204, cors)
+    if request.method == "GET":
+        return (callme.page("/call-me"), 200, {"Content-Type": "text/html; charset=utf-8"})
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict()
+    try:
+        result = callme.handle(store, payload, telegram.send_message)
+    except Exception as exc:  # the person must never see an error; tell Yeukai instead
+        try:
+            telegram.send_message(f"A call-me request arrived but failed ({type(exc).__name__}: {exc}). Details: {payload}")
+        except Exception:
+            pass
+        result = {"ok": True, "message": "Thank you. We've got your request and will call you shortly."}
+    return (jsonify(result), 200, cors)
+
+
 @app.route("/tt/scorecard", methods=["GET", "POST", "OPTIONS"])
 def tt_scorecard():
     """Free practice lesson: the in-page scorecard (GET) and 'Email this report' (POST). See scorecard.py."""
@@ -898,6 +934,12 @@ def health():
         import followups
 
         followups.check_in_background(store, telegram.send_message)
+    except Exception:
+        pass
+    try:  # call-me requests made outside calling hours: ring them once hours open
+        import callme
+
+        threading.Thread(target=callme.flush, args=(store, telegram.send_message), daemon=True).start()
     except Exception:
         pass
     return "Well-Led Network reply service is running."
